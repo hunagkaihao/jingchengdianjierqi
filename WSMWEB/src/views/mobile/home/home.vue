@@ -66,9 +66,6 @@
             </div>
           </a-col>
           <a-col :span="8">
-            <div class="menu-item-card" @click="shelfStatus"><div class="menu-item-icon-wrapper"><DatabaseOutlined class="menu-item-icon" /></div><div class="menu-item-text">货架状态</div></div>
-          </a-col>
-          <a-col :span="8">
             <div class="menu-item-card" @click="mobileMachineConfig">
               <div class="menu-item-icon-wrapper">
                 <ToolOutlined class="menu-item-icon" />
@@ -76,10 +73,18 @@
               <div class="menu-item-text">机台配置</div>
             </div>
           </a-col>
+          
         </a-row>
         <!-- 容器配送按钮已注释 -->
 
         <a-row justify="center" style="margin-top: 20px; margin-bottom: 20px">
+          <a-col :span="8">
+            <div class="menu-item-card" @click="shelfStatus">
+              <div class="menu-item-icon-wrapper">
+                <DatabaseOutlined class="menu-item-icon" />
+              </div><div class="menu-item-text">货架状态</div>
+            </div>
+          </a-col>
           <!-- 料车叫回按钮已移除 -->
           <!-- 手工入库按钮已移除 -->
 
