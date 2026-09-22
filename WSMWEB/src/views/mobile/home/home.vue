@@ -66,6 +66,9 @@
             </div>
           </a-col>
           <a-col :span="8">
+            <div class="menu-item-card" @click="shelfStatus"><div class="menu-item-icon-wrapper"><DatabaseOutlined class="menu-item-icon" /></div><div class="menu-item-text">货架状态</div></div>
+          </a-col>
+          <a-col :span="8">
             <div class="menu-item-card" @click="mobileMachineConfig">
               <div class="menu-item-icon-wrapper">
                 <ToolOutlined class="menu-item-icon" />
@@ -243,6 +246,7 @@ const mobileTaskManage = async () => {
 const mobileMachineStatus = async () => {
   await router.replace('/mobileMachineStatus');
 };
+const shelfStatus = async () => { await router.replace('/shelfStatus'); };
 const mobileMachineConfig = async () => {
   await router.replace('/mobileMachineConfig');
 };

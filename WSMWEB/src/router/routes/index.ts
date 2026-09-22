@@ -232,6 +232,7 @@ export const MobileMachineStatus: AppRouteRecordRaw = {
     ignoreAuth: true,
   },
 };
+export const ShelfStatus: AppRouteRecordRaw = { path: '/shelfStatus', name: 'ShelfStatus', component: () => import('/@/views/mobile/views/ShelfStatus.vue'), meta: { title: t('货架状态'), ignoreKeepAlive: true, ignoreAuth: true } };
 //移动端机台配置
 export const MobileMachineConfig: AppRouteRecordRaw = {
   path: '/mobileMachineConfig',
@@ -282,6 +283,7 @@ export const basicRoutes = [
   GoodsBind,
   AcceptanceCall2,
   MobileMachineStatus,
+  ShelfStatus,
   MobileMachineConfig,
   // AcceptanceOut2已删除
   // ShelfIncellList已删除

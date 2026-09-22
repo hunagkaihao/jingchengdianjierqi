@@ -10,7 +10,7 @@ using Wms.LogTool;
 
 namespace Wms.ModbusTool;
 
-public class ModbusHelper : ISingletonDependency
+public class ModbusHelper : ISingletonDependency, IModbusInputReader
 {
     private readonly ILogger<ModbusHelper> _logger;
     private readonly IOptions<ConfigOptions> _options;
@@ -32,8 +32,41 @@ public class ModbusHelper : ISingletonDependency
     /// <param name="startAddress">起始地址</param>
     /// <param name="count">读取数量</param>
     /// <returns>状态数组</returns>
+    /// <summary>读取离散输入并返回明确的通信结果。</summary>
+    public async Task<ModbusInputReadResult> ReadInputsWithStatusAsync(string ipAddress, int port, byte slaveId, ushort startAddress, ushort count, CancellationToken cancellationToken = default)
+    {
+        TcpClient client = null;
+        NetworkStream stream = null;
+        try
+        {
+            client = new TcpClient();
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(5));
+            await client.ConnectAsync(ipAddress, port, connectCts.Token);
+            client.ReceiveTimeout = 5000;
+            client.SendTimeout = 3000;
+            stream = client.GetStream();
+            var request = BuildReadInputsRequest(slaveId, startAddress, count);
+            await stream.WriteAsync(request, 0, request.Length, cancellationToken);
+            var response = new byte[1024];
+            var bytesRead = await stream.ReadAsync(response, 0, response.Length, cancellationToken);
+            var expectedByteCount = (count + 7) / 8;
+            if (bytesRead < 9 || response[7] != 0x02 || response[8] != expectedByteCount || bytesRead < 9 + expectedByteCount)
+                return ModbusInputReadResult.Failure(count, "Modbus 响应格式错误");
+            return ModbusInputReadResult.Success(ParseReadInputsResponse(response, bytesRead, count));
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"读取离散输入失败 [{ipAddress}:{port}]: {ex.Message}");
+            return ModbusInputReadResult.Failure(count, ex.Message);
+        }
+        finally { stream?.Close(); client?.Close(); }
+    }
+
     public async Task<bool[]> ReadMachineStatusAsync(string ipAddress, int port, byte slaveId, ushort startAddress, ushort count)
     {
+        return (await ReadInputsWithStatusAsync(ipAddress, port, slaveId, startAddress, count)).Values;
+        /*
         TcpClient client = null;
         NetworkStream stream = null;
         try
@@ -68,7 +101,7 @@ public class ModbusHelper : ISingletonDependency
         {
             stream?.Close();
             client?.Close();
-        }
+        }*/
     }
 
     /// <summary>

@@ -23,5 +23,6 @@ public class ToolsModule : AbpModule
         });
         context.Services.AddTransient<IRedisClient, RedisClientByStaEx>();
         context.Services.AddSingleton<ModbusHelper>();
+        context.Services.AddSingleton<IModbusInputReader>(provider => provider.GetRequiredService<ModbusHelper>());
     }
 }

@@ -25,6 +25,26 @@ namespace Wms.ConfigTool
         public bool IsNoPlanType { get; set; }
     }
 
+    /// <summary>货架信号采集设备及货架读取顺序配置。</summary>
+    public class ShelfStatusDeviceOptions
+    {
+        public string RowName { get; set; } = string.Empty;
+        public string IpAddress { get; set; } = string.Empty;
+        public int Port { get; set; } = 502;
+        public byte SlaveId { get; set; } = 1;
+        public ushort ReadCount { get; set; } = 104;
+        public List<ShelfStatusRangeOptions> ShelfRanges { get; set; } = new List<ShelfStatusRangeOptions>();
+    }
+
+    /// <summary>一段连续货架的编号、方向和规格配置。</summary>
+    public class ShelfStatusRangeOptions
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
+        public int Step { get; set; }
+        public string TypeCode { get; set; } = string.Empty;
+    }
+
 
     public class ConfigOptions
     {
@@ -42,6 +62,7 @@ namespace Wms.ConfigTool
         public bool RemovePlcTagTempValueOnStart { get; set; }
 
         public List<PickTypeMap> PickTypeMaps { get; set; }
+        public List<ShelfStatusDeviceOptions> ShelfStatusDevices { get; set; } = new List<ShelfStatusDeviceOptions>();
 
     }
 
