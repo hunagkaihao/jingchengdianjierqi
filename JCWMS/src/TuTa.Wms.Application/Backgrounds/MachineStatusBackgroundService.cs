@@ -137,6 +137,7 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
                     }
 
                     await ReadMachineStatuses();
+                    await SyncShelfCellStatusesAsync();
                     await Task.Delay(10000, cancellationToken);
                 }
             }
@@ -251,6 +252,105 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
         var tasks = configs.Select(config => ReadMachineStatus(config)).ToList();
         await Task.WhenAll(tasks);
     }
+
+    /// <summary>
+    /// 根据货架传感器 DI 状态同步库位状态。
+    /// 仅更新 <see cref="Cell.CellStatus"/>，不执行容器解绑、库存变更或任务创建。
+    /// </summary>
+    private async Task SyncShelfCellStatusesAsync()
+    {
+        var shelfSync = _options.Value.ShelfStatusSync;
+        var devices = _options.Value.ShelfStatusDevices;
+        if (shelfSync == null || !shelfSync.Enabled || devices == null || devices.Count == 0)
+            return;
+
+        var reads = await Task.WhenAll(devices.Select(device =>
+            _modbusHelper.ReadInputsWithStatusAsync(device.IpAddress, device.Port, device.SlaveId, 0, device.ReadCount)));
+
+        for (var deviceIndex = 0; deviceIndex < devices.Count; deviceIndex++)
+        {
+            var device = devices[deviceIndex];
+            var read = reads[deviceIndex];
+            if (!read.IsSuccess)
+            {
+                _logger.LogWarning("货架传感器 {RowName}({Ip}:{Port}) 读取失败，跳过本排库位状态同步：{Error}",
+                    device.RowName, device.IpAddress, device.Port, read.ErrorMessage);
+                continue;
+            }
+
+            var points = BuildShelfSensorPoints(device, read.Values);
+            if (points.Count == 0)
+                continue;
+
+            try
+            {
+                using var uow = _unitOfWorkManager.Begin();
+                var cellCodes = points.Select(point => point.CellCode).ToList();
+                var cells = await _cellRepository.GetListAsync(cell => cellCodes.Contains(cell.CellCode));
+                var cellsByCode = cells
+                    .GroupBy(cell => cell.CellCode, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var point in points)
+                {
+                    if (!cellsByCode.TryGetValue(point.CellCode, out var matchingCells))
+                    {
+                        _logger.LogDebug("货架传感器点位 {CellCode} 未找到对应库位，跳过状态同步", point.CellCode);
+                        continue;
+                    }
+
+                    // 同一物理库位可供多个机台使用，同步所有对应记录的传感器状态。
+                    foreach (var cell in matchingCells)
+                    {
+                        if (cell.CellStatus == point.CellStatus)
+                            continue;
+
+                        cell.SetCellStatus(point.CellStatus);
+                        await _cellRepository.UpdateAsync(cell);
+                    }
+                }
+
+                await uow.CompleteAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "货架传感器 {RowName} 库位状态同步失败", device.RowName);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 按 appsettings 中的货架区间和层位顺序构建有效传感器点位。
+    /// </summary>
+    private static List<ShelfSensorPoint> BuildShelfSensorPoints(ShelfStatusDeviceOptions device, IReadOnlyList<bool> values)
+    {
+        var points = new List<ShelfSensorPoint>();
+        foreach (var range in device.ShelfRanges ?? new List<ShelfStatusRangeOptions>())
+        {
+            if (range.Step == 0)
+                continue;
+
+            for (var shelf = range.Start; shelf != range.End + range.Step; shelf += range.Step)
+            {
+                for (var layer = 1; layer <= 3; layer++)
+                {
+                    var diIndex = points.Count;
+                    if (diIndex >= values.Count)
+                        return points;
+
+                    points.Add(new ShelfSensorPoint(
+                        $"{shelf:D6}X{range.TypeCode}{layer:D2}013",
+                        values[diIndex] ? CellStatus.Nohave : CellStatus.Have));
+                }
+            }
+        }
+        return points;
+    }
+
+    /// <summary>
+    /// 一个货架传感器点位对应的库位编码和目标状态。
+    /// </summary>
+    private sealed record ShelfSensorPoint(string CellCode, CellStatus CellStatus);
 
     /// <summary>
     /// 清理已停用机台的 Redis 状态与内存缓存（热更新配置后调用）

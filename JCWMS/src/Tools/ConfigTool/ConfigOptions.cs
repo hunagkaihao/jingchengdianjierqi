@@ -45,6 +45,17 @@ namespace Wms.ConfigTool
         public string TypeCode { get; set; } = string.Empty;
     }
 
+    /// <summary>
+    /// 货架传感器状态同步到库位表的开关配置。
+    /// </summary>
+    public class ShelfStatusSyncOptions
+    {
+        /// <summary>
+        /// 是否启用传感器状态写入 cells.CellStatus；默认关闭。
+        /// </summary>
+        public bool Enabled { get; set; }
+    }
+
 
     public class ConfigOptions
     {
@@ -63,6 +74,7 @@ namespace Wms.ConfigTool
 
         public List<PickTypeMap> PickTypeMaps { get; set; }
         public List<ShelfStatusDeviceOptions> ShelfStatusDevices { get; set; } = new List<ShelfStatusDeviceOptions>();
+        public ShelfStatusSyncOptions ShelfStatusSync { get; set; } = new ShelfStatusSyncOptions();
 
     }
 
