@@ -817,7 +817,6 @@ namespace TuTa.Wms.AgvTasks
                     t.CellStatus == CellStatus.Have &&
                    (t.ShelfName == null || t.ShelfName == ""));
                 
-
                 if (emptyBoxCells == null || emptyBoxCells.Count == 0)
                 {
                     throw new UserFriendlyException("没有找到空衬托上架区域的有货库位");
@@ -994,8 +993,7 @@ namespace TuTa.Wms.AgvTasks
                     t.RunStatus == CellRunStatus.Enable && 
                     t.CellStatus == CellStatus.Nohave &&
                     machineName != null && t.ShelfName.Contains(machineName));
-
-
+                
                 if (emptyBoxCells == null || emptyBoxCells.Count == 0)
                 {
                     throw new UserFriendlyException("没有找到空盒衬区域的可用库位");

@@ -37,8 +37,6 @@ public class WmsEntityFrameworkCoreModule : AbpModule
             options.AddDefaultRepositories(includeAllEntities: true);
         });
 
-
-
         Configure<AbpDbContextOptions>(options =>
         {
             /* The main point to change your DBMS.

@@ -15,14 +15,10 @@ public class MachinePoint : AggregateRoot<int>
     /// </summary>
     public string Name { get; set; }
     
-
-    
     /// <summary>
     /// 门编号（1-4）
     /// </summary>
     public int DoorNumber { get; set; }
-    
-
     
     /// <summary>
     /// 库位代码

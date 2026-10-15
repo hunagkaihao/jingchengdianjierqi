@@ -30,6 +30,10 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
     private readonly ILogger<MachineStatusBackgroundService> _logger;
     private readonly IConfiguration _configuration;
     private readonly AgvTaskManager _agvTaskManager;
+    /// <summary>读取解绑原始响应，区分已无容器和需要重试的 RCS 错误。</summary>
+    private readonly RcsApiManager _rcsApiManager;
+    /// <summary>记录货架取货变化及当前进程内待重试的解绑操作。</summary>
+    private readonly ShelfCellUnbindTracker _shelfUnbindTracker = new();
     private readonly IRepository<Machine, int> _machineRepository;
     private readonly IRepository<MachinePoint, int> _machinePointRepository;
     private readonly IRepository<Cell, Guid> _cellRepository;
@@ -39,6 +43,10 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
     private readonly IOptions<ConfigOptions> _options;
     private readonly List<MachineConfig> _machineConfigs = new List<MachineConfig>();
     private readonly ConcurrentDictionary<string, bool> _lastFullMaterialStatus = new ConcurrentDictionary<string, bool>();
+    /// <summary>本次运行中持续未匹配到库位的编码，匹配恢复前仅记录一次日志。</summary>
+    private readonly HashSet<string> _missingShelfCellCodes = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>各采集设备当前的同步异常；同一异常持续发生时不重复刷屏，恢复后清除。</summary>
+    private readonly Dictionary<string, string> _shelfSyncErrors = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _configLock = new object();
 
     /// <summary>
@@ -71,13 +79,15 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
         IRepository<AgvTask, int> agvTaskRepository,
         IAgvTaskService agvTaskService,
         IRedisClient redisClient,
-        IOptions<ConfigOptions> options)
+        IOptions<ConfigOptions> options,
+        RcsApiManager rcsApiManager)
     {
         _modbusHelper = modbusHelper;
         _unitOfWorkManager = unitOfWorkManager;
         _logger = logger;
         _configuration = configuration;
         _agvTaskManager = agvTaskManager;
+        _rcsApiManager = rcsApiManager;
         _machineRepository = machineRepository;
         _machinePointRepository = machinePointRepository;
         _cellRepository = cellRepository;
@@ -137,6 +147,7 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
                     }
 
                     await ReadMachineStatuses();
+                    await SyncShelfCellStatusesAsync();
                     await Task.Delay(10000, cancellationToken);
                 }
             }
@@ -153,83 +164,86 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 从数据库中加载机台配置
+    /// </summary>
     private async Task LoadMachineConfigsFromDatabaseAsync()
     {
         try
         {
             using (var uow = _unitOfWorkManager.Begin())
+            {
+                var machines = await _machineRepository.GetListAsync(m => m.IsEnabled);
+                if (machines == null || machines.Count == 0)
                 {
-                    var machines = await _machineRepository.GetListAsync(m => m.IsEnabled);
-                    if (machines == null || machines.Count == 0)
-                    {
-                        _logger.LogWarning("没有找到启用的机台");
-                        lock (_configLock)
-                        {
-                            _machineConfigs.Clear();
-                        }
-                        return;
-                    }
-
-                    var newConfigs = new List<MachineConfig>();
-
-                    foreach (var machine in machines)
-                    {
-                        if (string.IsNullOrEmpty(machine.IpAddress))
-                        {
-                            _logger.LogWarning("机台 {MachineName} 未配置IP地址，跳过监控", machine.Name);
-                            continue;
-                        }
-
-                        var config = new MachineConfig
-                        {
-                            MachineName = machine.Name,
-                            IpAddress = machine.IpAddress,
-                            Port = machine.Port,
-                            SlaveId = machine.SlaveId,
-                            MachineCellCode = machine.Name
-                        };
-
-                        var machinePoints = await _machinePointRepository.GetListAsync(p => p.MachineId == machine.Id);
-                        if (machinePoints == null || machinePoints.Count == 0)
-                        {
-                            _logger.LogWarning("机台 {MachineName} 未配置门站点，跳过监控", machine.Name);
-                            continue;
-                        }
-
-                        var doorGroups = machinePoints.GroupBy(p => p.DoorNumber);
-                        foreach (var group in doorGroups)
-                        {
-                            int doorNumber = group.Key;
-                            var point = group.First();
-
-                            if (doorNumber == 1)
-                            {
-                                config.Gate1FullMaterialAddress = point.FullMaterialAddress;
-                                config.Gate1CellCode = point.CellCode;
-                                config.Gate1TaskType = point.TaskType;
-                            }
-                            else if (doorNumber == 2)
-                            {
-                                config.Gate2FullMaterialAddress = point.FullMaterialAddress;
-                                config.Gate2CellCode = point.CellCode;
-                                config.Gate2TaskType = point.TaskType;
-                            }
-                        }
-
-                        newConfigs.Add(config);
-                    }
-
-                    // 整体替换监控配置，避免与监控循环并发读写冲突
+                    _logger.LogWarning("没有找到启用的机台");
                     lock (_configLock)
                     {
                         _machineConfigs.Clear();
-                        _machineConfigs.AddRange(newConfigs);
+                    }
+                    return;
+                }
+
+                var newConfigs = new List<MachineConfig>();
+
+                foreach (var machine in machines)
+                {
+                    if (string.IsNullOrEmpty(machine.IpAddress))
+                    {
+                        _logger.LogWarning("机台 {MachineName} 未配置IP地址，跳过监控", machine.Name);
+                        continue;
                     }
 
-                    _logger.LogInformation("从数据库加载了 {Count} 个可用设备配置", newConfigs.Count);
+                    var config = new MachineConfig
+                    {
+                        MachineName = machine.Name,
+                        IpAddress = machine.IpAddress,
+                        Port = machine.Port,
+                        SlaveId = machine.SlaveId,
+                        MachineCellCode = machine.Name
+                    };
 
-                    await uow.CompleteAsync();
+                    var machinePoints = await _machinePointRepository.GetListAsync(p => p.MachineId == machine.Id);
+                    if (machinePoints == null || machinePoints.Count == 0)
+                    {
+                        _logger.LogWarning("机台 {MachineName} 未配置门站点，跳过监控", machine.Name);
+                        continue;
+                    }
+
+                    var doorGroups = machinePoints.GroupBy(p => p.DoorNumber);
+                    foreach (var group in doorGroups)
+                    {
+                        int doorNumber = group.Key;
+                        var point = group.First();
+
+                        if (doorNumber == 1)
+                        {
+                            config.Gate1FullMaterialAddress = point.FullMaterialAddress;
+                            config.Gate1CellCode = point.CellCode;
+                            config.Gate1TaskType = point.TaskType;
+                        }
+                        else if (doorNumber == 2)
+                        {
+                            config.Gate2FullMaterialAddress = point.FullMaterialAddress;
+                            config.Gate2CellCode = point.CellCode;
+                            config.Gate2TaskType = point.TaskType;
+                        }
+                    }
+
+                    newConfigs.Add(config);
                 }
+
+                // 整体替换监控配置，避免与监控循环并发读写冲突
+                lock (_configLock)
+                {
+                    _machineConfigs.Clear();
+                    _machineConfigs.AddRange(newConfigs);
+                }
+
+                _logger.LogInformation("从数据库加载了 {Count} 个可用设备配置", newConfigs.Count);
+
+                await uow.CompleteAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -251,6 +265,155 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
         var tasks = configs.Select(config => ReadMachineStatus(config)).ToList();
         await Task.WhenAll(tasks);
     }
+
+    /// <summary>
+    /// 根据货架传感器 DI 状态同步库位状态。
+    /// 更新 <see cref="Cell.CellStatus"/>，取货后通知 RCS 解除仓位容器绑定。
+    /// 不变更 WMS 库存、容器关联或创建任务。
+    /// </summary>
+    private async Task SyncShelfCellStatusesAsync()
+    {
+        var shelfSync = _options.Value.ShelfStatusSync;
+        var devices = _options.Value.ShelfStatusDevices;
+        if (shelfSync == null || !shelfSync.Enabled || devices == null || devices.Count == 0)
+            return;
+
+        var reads = await Task.WhenAll(devices.Select(device =>
+            _modbusHelper.ReadInputsWithStatusAsync(device.IpAddress, device.Port, device.SlaveId, 0, device.ReadCount)));
+
+        for (var deviceIndex = 0; deviceIndex < devices.Count; deviceIndex++)
+        {
+            var device = devices[deviceIndex];
+            var read = reads[deviceIndex];
+            if (!read.IsSuccess)
+            {
+                _logger.LogWarning("货架传感器 {RowName}({Ip}:{Port}) 读取失败，跳过本排库位状态同步：{Error}",
+                    device.RowName, device.IpAddress, device.Port, read.ErrorMessage);
+                continue;
+            }
+
+            var points = BuildShelfSensorPoints(device, read.Values);
+            if (points.Count == 0)
+                continue;
+
+            var deviceKey = $"{device.RowName}@{device.IpAddress}:{device.Port}/{device.SlaveId}";
+            try
+            {
+                using var uow = _unitOfWorkManager.Begin();
+                var cellCodes = points.Select(point => point.CellCode).ToList();
+                var cells = await _cellRepository.GetListAsync(cell => cellCodes.Contains(cell.CellCode));
+                // 同一编码可以对应不同架子的多条库位记录，必须整组同步，不能按唯一键构建字典。
+                var cellsByCode = cells.ToLookup(cell => cell.CellCode, StringComparer.OrdinalIgnoreCase);
+                var previousStatuses = new Dictionary<string, CellStatus>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var point in points)
+                {
+                    if (!cellsByCode.Contains(point.CellCode))
+                    {
+                        if (_missingShelfCellCodes.Add(point.CellCode))
+                            _logger.LogDebug("货架传感器点位 {CellCode} 未找到对应库位，跳过状态同步（持续缺失不重复记录）", point.CellCode);
+                        continue;
+                    }
+
+                    _missingShelfCellCodes.Remove(point.CellCode);
+                    previousStatuses[point.CellCode] = await SyncShelfCellGroupAsync(
+                        cellsByCode[point.CellCode], point.CellStatus,
+                        async cell => { await _cellRepository.UpdateAsync(cell); });
+                }
+
+                await uow.CompleteAsync();
+
+                // 数据库提交后按仓位编码处理一次解绑；同编码多个库位不重复发送。
+                // 即使库位已是无货，也必须处理上轮未完成的重试。
+                foreach (var point in points)
+                {
+                    if (!previousStatuses.TryGetValue(point.CellCode, out var previousStatus))
+                        continue;
+
+                    try
+                    {
+                        await _shelfUnbindTracker.SyncAsync(point.CellCode, point.CellStatus, previousStatus,
+                            cellCode => _rcsApiManager.BindCtnrAndBinAsync(null, cellCode, "1", string.Empty, "0"));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "货架库位 {CellCode} 解绑失败，若后续采集仍无货将在下一轮重试", point.CellCode);
+                    }
+                }
+
+                _shelfSyncErrors.Remove(deviceKey);
+            }
+            catch (Exception ex)
+            {
+                var error = $"{ex.GetType().FullName}:{ex.Message}";
+                if (!_shelfSyncErrors.TryGetValue(deviceKey, out var previousError) || previousError != error)
+                {
+                    _shelfSyncErrors[deviceKey] = error;
+                    _logger.LogError(ex, "货架传感器 {RowName} 库位状态同步失败（同一异常持续发生不重复记录）", device.RowName);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 将一个传感器对应的全部同编码库位更新为目标状态，保留组内原有的有货信息用于判断取货。
+    /// </summary>
+    /// <param name="cells">同一仓位编码对应的库位记录，可属于不同架子。</param>
+    /// <param name="targetStatus">本轮传感器映射的库位状态。</param>
+    /// <param name="update">持久化单条已变更库位的操作，由调用方工作单元统一提交。</param>
+    /// <returns>组内任一库位原为有货或满货时返回该有货状态，否则返回无货。</returns>
+    internal static async Task<CellStatus> SyncShelfCellGroupAsync(
+        IEnumerable<Cell> cells, CellStatus targetStatus, Func<Cell, Task> update)
+    {
+        var group = cells.ToList();
+        var previousStatus = group.Any(cell => cell.CellStatus == CellStatus.Have)
+            ? CellStatus.Have
+            : group.Any(cell => cell.CellStatus == CellStatus.Full) ? CellStatus.Full : CellStatus.Nohave;
+
+        foreach (var cell in group)
+        {
+            if (cell.CellStatus == targetStatus)
+                continue;
+
+            cell.SetCellStatus(targetStatus);
+            await update(cell);
+        }
+
+        return previousStatus;
+    }
+
+    /// <summary>
+    /// 按 appsettings 中的货架区间和层位顺序构建有效传感器点位。
+    /// </summary>
+    private static List<ShelfSensorPoint> BuildShelfSensorPoints(ShelfStatusDeviceOptions device, IReadOnlyList<bool> values)
+    {
+        var points = new List<ShelfSensorPoint>();
+        foreach (var range in device.ShelfRanges ?? new List<ShelfStatusRangeOptions>())
+        {
+            if (range.Step == 0)
+                continue;
+
+            for (var shelf = range.Start; shelf != range.End + range.Step; shelf += range.Step)
+            {
+                for (var layer = 1; layer <= 3; layer++)
+                {
+                    var diIndex = points.Count;
+                    if (diIndex >= values.Count)
+                        return points;
+
+                    points.Add(new ShelfSensorPoint(
+                        $"{shelf:D6}X{range.TypeCode}{layer:D2}013",
+                        values[diIndex] ? CellStatus.Nohave : CellStatus.Have));
+                }
+            }
+        }
+        return points;
+    }
+
+    /// <summary>
+    /// 一个货架传感器点位对应的库位编码和目标状态。
+    /// </summary>
+    private sealed record ShelfSensorPoint(string CellCode, CellStatus CellStatus);
 
     /// <summary>
     /// 清理已停用机台的 Redis 状态与内存缓存（热更新配置后调用）
@@ -376,6 +539,12 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
         }
     }
 
+    /// <summary>
+    /// 处理门状态
+    /// </summary>
+    /// <param name="config">机台配置</param>
+    /// <param name="point">机台门点位</param>
+    /// <param name="doorTasks">门任务</param>
     private async Task ProcessDoorStatus(MachineConfig config, MachinePoint point, Dictionary<string, AgvTask> doorTasks)
     {
         var machineName = config.MachineName;
@@ -430,15 +599,19 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
                     {
                         switch (point.TaskType)
                         {
+                            // 空盒衬上机台
                             case "EmptyBoxToMachine":
                                 await _agvTaskService.CreateEmptyBoxToMachineTaskAsync(point.CellCode);
                                 break;
+                            // 成品下机台
                             case "FinishedFromMachine":
                                 await _agvTaskService.CreateFinishedFromMachineTaskAsync(point.CellCode, machineName);
                                 break;
+                            // 空盒衬下机台
                             case "EmptyBoxFromMachine":
                                 await _agvTaskService.CreateEmptyBoxFromMachineTaskAsync(point.CellCode);
                                 break;
+                            // 半成品下机台
                             case "SemiFinishedFromMachine":
                                 await _agvTaskService.CreateSemiFinishedFromMachineTaskAsync(point.CellCode, machineName);
                                 break;

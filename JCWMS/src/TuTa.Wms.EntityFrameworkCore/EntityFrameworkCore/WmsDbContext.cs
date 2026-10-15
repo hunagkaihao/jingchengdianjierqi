@@ -96,12 +96,7 @@ public class WmsDbContext :
     public DbSet<Cell> Cells { get; set; }
 
     public DbSet<CellBox> CellBoxes { get; set; }
-
-
-
-
-
-
+    
     public DbSet<AgvTask> AgvTasks { get; set; }
 
     public DbSet<BarcodeList> BarcodeLists { get; set; }
@@ -113,12 +108,6 @@ public class WmsDbContext :
     public DbSet<MachineProduction> MachineProductions { get; set; }
 
     public DbSet<MachinePoint> MachinePoints { get; set; }
-
-
-
-
-
-
 
     public WmsDbContext(DbContextOptions<WmsDbContext> options)
         : base(options)
@@ -183,9 +172,7 @@ public class WmsDbContext :
             b.HasKey(o => new { o.CellId, o.BoxId });
             b.HasOne<Cell>().WithMany(o => o.CellBoxes).HasForeignKey(o => o.CellId);
         });
-
-
-
+        
         builder.Entity<Stock>(b =>
         {
             b.ToTable("Stocks", WmsConsts.DbSchema);
@@ -230,15 +217,6 @@ public class WmsDbContext :
             b.ConfigureByConvention(); //auto configure for the base class props
             b.HasOne<Box>().WithMany(o => o.StocksInBox).HasForeignKey(o => o.BoxId);
         });
-
-
-
-
-
-
-
-
-
 
         builder.Entity<AgvTask>(b =>
         {
