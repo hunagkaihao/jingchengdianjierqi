@@ -333,7 +333,7 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
                     try
                     {
                         await _shelfUnbindTracker.SyncAsync(point.CellCode, point.CellStatus, previousStatus,
-                            cellCode => _rcsApiManager.BindCtnrAndBinAsync(null, cellCode, "1", string.Empty, "0"));
+                            (cellCode, reqCode) => _rcsApiManager.BindCtnrAndBinAsync(reqCode, cellCode, "1", string.Empty, "0"));
                     }
                     catch (Exception ex)
                     {

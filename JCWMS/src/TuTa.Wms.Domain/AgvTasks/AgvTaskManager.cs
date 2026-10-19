@@ -515,12 +515,22 @@ namespace TuTa.Wms.AgvTasks
                     string[] userCallCodePath = new string[2];
                     userCallCodePath[0] = entity.StartPositionCode + "${05}";
                     userCallCodePath[1] = entity.EndPositionCode + "${05}";
-                    //设置AGV执行任务
-                    var response = await _rcsApiManager.CreateStockTaskAsync(entity.ReqCode, entity.TaskTyp, entity.CtnrTyp, userCallCodePath
-                        , entity.ReqCode, entity.BoxCode, entity.PodCode);
-                    if (response.Code != "0")
+                    // 无可用仓位时按现场规则解绑目标，再以相同任务编号和路径重发一次。
+                    var response = await RcsTaskDispatchRecovery.SendAsync(entity.EndPositionCode,
+                        () => _rcsApiManager.CreateStockTaskAsync(entity.ReqCode, entity.TaskTyp, entity.CtnrTyp,
+                            userCallCodePath, entity.ReqCode, entity.BoxCode, entity.PodCode),
+                        target =>
+                        {
+                            // 同一任务的目标解绑重复提交时复用编号，不与原任务的下发请求混用。
+                            var unbindReqCode = RcsTaskDispatchRecovery.GetUnbindRequestCode(entity.ReqCode, target);
+                            _logger.LogWarning("目标仓位 {CellCode} 解绑，reqCode: {ReqCode}，原任务: {TaskCode}",
+                                target, unbindReqCode, entity.ReqCode);
+                            return _rcsApiManager.BindCtnrAndBinAsync(unbindReqCode, target, "1", string.Empty, "0");
+                        },
+                        message => _logger.LogWarning("{RecoveryMessage}，任务编号: {TaskCode}", message, entity.ReqCode));
+                    if (response?.Code != "0")
                     {
-                        throw new UserFriendlyException(message: response.Message);
+                        throw new UserFriendlyException(message: response?.Message ?? "RCS任务下发返回空响应");
                     }
                 }
 

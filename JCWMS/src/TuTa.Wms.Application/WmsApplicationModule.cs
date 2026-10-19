@@ -29,5 +29,6 @@ public class WmsApplicationModule : AbpModule
         });
         //context.Services.AddHostedService<PickListBackGroundService>();
         context.Services.AddHostedService<MachineStatusBackgroundService>();
+        context.Services.AddHostedService<AgvTaskTimeoutBackgroundService>();
     }
 }

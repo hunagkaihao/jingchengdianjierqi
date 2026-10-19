@@ -203,14 +203,13 @@ namespace TuTa.Wms.AgvTasks
         */
 
         /// <summary>
-        /// 解绑和绑定料箱和仓位
+        /// 仓位与容器的关系绑定，容器类型编号写入仓位表
         /// </summary>
-        /// <param name="reqCode"></param>
-        /// <param name="stgBinCode"></param>
-        /// <param name="ctnrTyp"></param>
-        /// <param name="ctnrCode"></param>
-        /// <param name="ctnrNum"></param>
-        /// <param name="indBind"></param>
+        /// <param name="reqCode">请求编号，每个请求都要一个唯一 编号，同一个请求重复提交，使用同一编号</param>
+        /// <param name="stgBinCode">仓位编号，与仓位绑定解绑必填</param>
+        /// <param name="ctnrTyp">容器类型</param>
+        /// <param name="ctnrCode">容器编号（选填）</param>
+        /// <param name="indBind">1：绑定，0：解绑</param>
         /// <returns></returns>
         public async Task<ResultAgvTaskDto> BindCtnrAndBinAsync(string reqCode, string stgBinCode, string ctnrTyp, string ctnrCode, string indBind)
         {
@@ -218,9 +217,8 @@ namespace TuTa.Wms.AgvTasks
             {
                 BindCtnrAndBinDto bindCtnrAndBinDto = new BindCtnrAndBinDto(reqCode, stgBinCode, ctnrTyp, ctnrCode, indBind);
                 //查询AGV任务状态接口
-                var response =
-      await HttpApiHelper.PostAsync<BindCtnrAndBinDto, ResultAgvTaskDto>("TTWMS",
-      $"{CMSServer}/rcms/services/rest/hikRpcService/bindCtnrAndBin", bindCtnrAndBinDto);
+                var response =await HttpApiHelper.PostAsync<BindCtnrAndBinDto, ResultAgvTaskDto>("TTWMS",
+                                            $"{CMSServer}/rcms/services/rest/hikRpcService/bindCtnrAndBin", bindCtnrAndBinDto);
                 return response;
             }
             else

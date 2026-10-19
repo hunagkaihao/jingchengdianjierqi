@@ -16,8 +16,8 @@ public class ShelfCellUnbindTracker
     /// <summary>各库位上一次成功采集并提交的传感器状态。</summary>
     private readonly Dictionary<string, CellStatus> _lastStatuses = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>取货后尚未确认解绑完成的库位，独立于数据库有无货状态。</summary>
-    private readonly HashSet<string> _pendingCells = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>待解绑库位及该次取货的唯一请求编号；失败重试沿用编号，完成或重新放货后移除。</summary>
+    private readonly Dictionary<string, string> _pendingRequestCodes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// 根据取货变化发起解绑；普通失败保留待重试，已无容器按完成处理。
@@ -25,10 +25,10 @@ public class ShelfCellUnbindTracker
     /// <param name="cellCode">完整仓位编码。</param>
     /// <param name="sensorStatus">当前传感器映射的有无货状态。</param>
     /// <param name="previousCellStatus">本轮更新前的数据库状态，用于首次采集判断取货。</param>
-    /// <param name="unbind">按仓位执行 RCS 解绑并返回原始响应的操作。</param>
+    /// <param name="unbind">接收仓位编码和 reqCode 执行 RCS 解绑；同次取货重试时 reqCode 不变。</param>
     /// <returns>当前库位的解绑处理任务；普通错误抛出异常，供后台记录并在后续循环重试。</returns>
     public async Task SyncAsync(string cellCode, CellStatus sensorStatus, CellStatus previousCellStatus,
-        Func<string, Task<ResultAgvTaskDto>> unbind)
+        Func<string, string, Task<ResultAgvTaskDto>> unbind)
     {
         var previousStatus = _lastStatuses.TryGetValue(cellCode, out var lastStatus)
             ? lastStatus
@@ -38,24 +38,25 @@ public class ShelfCellUnbindTracker
         // 重新放货后取消旧取货的重试，避免解除新容器的绑定。
         if (sensorStatus != CellStatus.Nohave)
         {
-            _pendingCells.Remove(cellCode);
+            _pendingRequestCodes.Remove(cellCode);
             return;
         }
 
-        if (previousStatus == CellStatus.Have || previousStatus == CellStatus.Full)
-            _pendingCells.Add(cellCode);
+        if ((previousStatus == CellStatus.Have || previousStatus == CellStatus.Full)
+            && !_pendingRequestCodes.ContainsKey(cellCode))
+            _pendingRequestCodes.Add(cellCode, Guid.NewGuid().ToString("N"));
 
-        if (!_pendingCells.Contains(cellCode))
+        if (!_pendingRequestCodes.TryGetValue(cellCode, out var reqCode))
             return;
 
-        var response = await unbind(cellCode);
+        var response = await unbind(cellCode, reqCode);
         if (response?.Code == "0" || IsAlreadyEmpty(response?.Message, cellCode))
         {
-            _pendingCells.Remove(cellCode);
+            _pendingRequestCodes.Remove(cellCode);
             return;
         }
 
-        throw new InvalidOperationException($"RCS 仓位解绑失败，返回码：{response?.Code ?? "空"}，消息：{response?.Message ?? "空响应"}");
+        throw new InvalidOperationException($"RCS 仓位解绑失败，reqCode：{reqCode}，返回码：{response?.Code ?? "空"}，消息：{response?.Message ?? "空响应"}");
     }
 
     /// <summary>
