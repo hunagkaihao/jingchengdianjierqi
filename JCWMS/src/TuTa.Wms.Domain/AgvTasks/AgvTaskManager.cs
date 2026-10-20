@@ -97,6 +97,33 @@ namespace TuTa.Wms.AgvTasks
             _logger = logger;
         }
 
+        /// <summary>
+        /// 同一物理仓位编码在不同机台下的记录共享运行状态，在调用方工作单元中统一持久化。
+        /// 只同步 RunStatus，不复制有无货、物料、架子名称等其他字段。
+        /// </summary>
+        /// <param name="anchor">本次任务选中的库位；使用其主编码同步，兼容通过备用编码找到库位的取消流程。</param>
+        /// <param name="status">Selected 表示锁定，Enable 表示解除锁定。</param>
+        internal async Task SetSharedCellRunStatusAsync(Cell anchor, CellRunStatus status)
+        {
+            if (status != CellRunStatus.Selected && status != CellRunStatus.Enable)
+                throw new ArgumentOutOfRangeException(nameof(status));
+
+            var cells = await _cellRepository.GetListAsync(cell => cell.CellCode == anchor.CellCode);
+            if (status == CellRunStatus.Selected && cells.Any(cell => cell.RunStatus == CellRunStatus.Selected))
+                throw new UserFriendlyException($"仓位{anchor.CellCode}已被锁定，不能重复下发任务");
+
+            foreach (var member in cells)
+            {
+                // 保留任务选中实体尚未提交的字段更新；其余机台记录仅同步运行状态。
+                var cell = member.Id == anchor.Id ? anchor : member;
+                if (status == CellRunStatus.Selected)
+                    cell.SetSelected();
+                else
+                    cell.SetEnable();
+                await _cellRepository.UpdateAsync(cell);
+            }
+        }
+
         [UnitOfWork]
         public async Task<AgvTask> CreateCtuStockInByStockTaskAsync(string boxCode, string ctnrTyp, string startCellName, string endCellName, string podCode, ManageType type)
         {
@@ -316,6 +343,9 @@ namespace TuTa.Wms.AgvTasks
                 var entity = await _agvTaskRepository.FindByReqCodeAsync(reqcode);
                 if (entity == null)
                     throw new UserFriendlyException(message: "AGV任务不存在");
+                // 完成回调重复到达时不再次解锁，避免释放后来任务对共享仓位的锁。
+                if (entity.AgvTaskStatus == AgvTaskStatus.Complete)
+                    return entity;
                 //if (entity.AgvTaskStatus == AgvTaskStatus.Complete)
                 //{
                 //    _logger.Error(reqcode + "AgvTask任务重复完成");
@@ -328,18 +358,16 @@ namespace TuTa.Wms.AgvTasks
                 Cell endCell = await _cellRepository.FindByCellCodeAsync(entity.EndPositionCode); ;
 
                 endCell.SetCellStatus(CellStatus.Have);
-                endCell.SetEnable();
                 _logger.Info($"设置目标库位{endCell.CellCode}为Enable");
-                await _cellRepository.UpdateAsync(endCell);
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Enable);
 
                 //设置开始库位状态
                 string startCode = entity.StartPositionCode;
                 Cell startCell = await _cellRepository.FindByCellCodeAsync(entity.StartPositionCode);
 
                 startCell.SetCellStatus(CellStatus.Nohave);
-                startCell.SetEnable();
                 _logger.Info($"设置开始库位{startCell.CellCode}为Enable");
-                await _cellRepository.UpdateAsync(startCell);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable);
 
                 /*Box box = null;
                 if (!(entity.StockTyp == ManageType.SkipMove || entity.StockTyp == ManageType.SkipCall || entity.StockTyp == ManageType.SkipSend
@@ -414,18 +442,16 @@ namespace TuTa.Wms.AgvTasks
                 {
                     endCell = await _cellRepository.FindByCellCodeAsync(entity.EndPositionCode);
                 }
-                endCell.SetEnable();
                 _logger.Info($"设置目标库位{endCell.CellCode}为Enable");
-                await _cellRepository.UpdateAsync(endCell);
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Enable);
                 //var endCell = await _cellRepository.FindByCellCodeAsync(entity.EndPositionCode);
                 //endCell.SetEnable();
                 //_logger.Info($"设置目标库位{endCell.CellCode}为Enable");
                 //await _cellRepository.UpdateAsync(endCell, true);
 
                 var startCell = await _cellRepository.FindByCellCodeAsync(entity.StartPositionCode);
-                startCell.SetEnable();
                 _logger.Info($"设置开始库位{startCell.CellCode}为Enable");
-                await _cellRepository.UpdateAsync(startCell, true);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable);
 
 
                 if (entity.StockTyp == ManageType.LiftStockOut)
@@ -610,10 +636,9 @@ namespace TuTa.Wms.AgvTasks
                 if (entity.StockTyp == ManageType.SkipMove || entity.StockTyp == ManageType.SkipCall || entity.StockTyp == ManageType.SkipSend)
                 {
                     var startCell = await _cellRepository.FindByCellCodeAsync(entity.StartPositionCode);
-                    startCell.SetEnable();
                     startCell.SetCellStatus(CellStatus.Nohave);
                     _logger.Info($"设置开始库位{startCell.CellCode}为Enable");
-                    await _cellRepository.UpdateAsync(startCell);
+                    await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable);
                 }
 
 
@@ -840,11 +865,10 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 5. 锁定开始库位和结束库位
-                startCell.SetSelected();
-                await _cellRepository.UpdateAsync(startCell);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
                 _logger.Info($"锁定开始库位: {startCell.CellCode}");
 
-                endCell.SetSelected();
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
                 _logger.Info($"锁定结束库位: {endCell.CellCode}");
 
                 // 6. 直接使用库位编码作为任务参数，不需要容器
@@ -925,12 +949,10 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 5. 锁定开始库位和结束库位
-                startCell.SetSelected();
-                await _cellRepository.UpdateAsync(startCell);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
                 _logger.Info($"锁定开始库位: {startCell.CellCode}");
 
-                endCell.SetSelected();
-                await _cellRepository.UpdateAsync(endCell);
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
                 _logger.Info($"锁定结束库位: {endCell.CellCode}");
 
                 // 6. 直接使用库位编码作为任务参数
@@ -1017,12 +1039,10 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 4. 锁定开始库位和结束库位
-                startCell.SetSelected();
-                await _cellRepository.UpdateAsync(startCell);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
                 _logger.Info($"锁定开始库位: {startCell.CellCode}");
 
-                endCell.SetSelected();
-                await _cellRepository.UpdateAsync(endCell);
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
                 _logger.Info($"锁定结束库位: {endCell.CellCode}");
 
                 // 5. 直接使用库位编码作为任务参数
@@ -1108,12 +1128,10 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 5. 锁定开始库位和结束库位
-                startCell.SetSelected();
-                await _cellRepository.UpdateAsync(startCell);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
                 _logger.Info($"锁定开始库位: {startCell.CellCode}");
 
-                endCell.SetSelected();
-                await _cellRepository.UpdateAsync(endCell);
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
                 _logger.Info($"锁定结束库位: {endCell.CellCode}");
 
                 // 6. 直接使用库位编码作为任务参数

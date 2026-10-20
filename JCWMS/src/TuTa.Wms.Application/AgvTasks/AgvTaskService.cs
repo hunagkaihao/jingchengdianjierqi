@@ -204,7 +204,7 @@ namespace TuTa.Wms.AgvTasks
                     var machinePoint = await GetMachinePointByCellCodeAsync(agvTask.StartPositionCode);
                     if (machinePoint == null)
                     {
-                                machinePoint = await GetMachinePointByCellCodeAsync(agvTask.EndPositionCode);
+                        machinePoint = await GetMachinePointByCellCodeAsync(agvTask.EndPositionCode);
                     }
                     // 启动后台任务处理 Modbus 通信（收回操作）
                     _ = Task.Run(async () =>
@@ -349,14 +349,13 @@ namespace TuTa.Wms.AgvTasks
 
                             if (machinePoint != null)
                             {   
-                                    // 获取通信参数
-                                    string machineIp = machinePoint.IpAddress;
-                                    int port = machinePoint.Port;
-                                    byte slaveId = machinePoint.SlaveId;
+                                // 获取通信参数
+                                string machineIp = machinePoint.IpAddress;
+                                int port = machinePoint.Port;
+                                byte slaveId = machinePoint.SlaveId;
 
-                                    // 写入到位信号为 0（重试直到成功，最多10次）
-                                    await TryWriteMachineSignalWithRetryAsync(machineIp, port, slaveId, machinePoint.ArriveAddress, false, "任务取消-到位信号清0", input.TaskCode);
-
+                                // 写入到位信号为 0（重试直到成功，最多10次）
+                                await TryWriteMachineSignalWithRetryAsync(machineIp, port, slaveId, machinePoint.ArriveAddress, false, "任务取消-到位信号清0", input.TaskCode);
                             }
                             else
                             {

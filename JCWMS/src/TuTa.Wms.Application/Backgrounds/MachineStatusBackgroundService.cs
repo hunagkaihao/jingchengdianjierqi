@@ -587,8 +587,9 @@ public class MachineStatusBackgroundService : IHostedService, IDisposable
 
                 using (var uow = _unitOfWorkManager.Begin())
                 {
-                    var cell = await _cellRepository.FindAsync(s => s.CellCode == point.CellCode);
-                    if (cell != null && cell.RunStatus == CellRunStatus.Selected)
+                    // 同一物理仓位可属于多个机台；任一记录被锁定均阻止重复派发。
+                    var isLocked = await _cellRepository.AnyAsync(s => s.CellCode == point.CellCode && s.RunStatus == CellRunStatus.Selected);
+                    if (isLocked)
                     {
                         _logger.LogWarning("库位 {CellCode} 被锁定，跳过任务发送", point.CellCode);
                         _lastFullMaterialStatus[key] = isFullMaterial;
