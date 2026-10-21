@@ -26,13 +26,14 @@ internal static class RcsTaskDispatchRecovery
 
     /// <summary>返回最终下发响应；解绑失败抛出异常，不继续下发。</summary>
     /// <param name="targetCellCode">原任务的目标仓位编码，不含路径后缀。</param>
-    /// <param name="dispatch">下发原任务的操作，恢复时最多额外调用一次。</param>
+    /// <param name="requestCode">首次下发的请求编号；与回调关联的业务任务编号由调用方保留。</param>
+    /// <param name="dispatch">接收本次 reqCode 下发原任务；解绑后重发使用新 reqCode，业务 taskCode 仍由调用方保持不变。</param>
     /// <param name="unbind">按目标编码调用 RCS 解绑并返回原始响应。</param>
     /// <param name="log">记录恢复步骤的日志操作。</param>
-    internal static async Task<ResultAgvTaskDto> SendAsync(string targetCellCode,
-        Func<Task<ResultAgvTaskDto>> dispatch, Func<string, Task<ResultAgvTaskDto>> unbind, Action<string> log)
+    internal static async Task<ResultAgvTaskDto> SendAsync(string targetCellCode, string requestCode,
+        Func<string, Task<ResultAgvTaskDto>> dispatch, Func<string, Task<ResultAgvTaskDto>> unbind, Action<string> log)
     {
-        var response = await dispatch();
+        var response = await dispatch(requestCode);
         // 只对现场确认的业务拒绝执行恢复；空响应、通信异常及其他错误不自动解绑。
         if (response == null || string.IsNullOrWhiteSpace(response.Code) || response.Code == "0"
             || response.Message?.Contains("未找到可用仓位", StringComparison.Ordinal) != true
@@ -44,10 +45,13 @@ internal static class RcsTaskDispatchRecovery
         if (unbindResponse?.Code != "0" && !IsAlreadyEmpty(unbindResponse?.Message, targetCellCode))
             throw new InvalidOperationException($"目标仓位 {targetCellCode} 解绑失败，停止任务重发。返回码：{unbindResponse?.Code ?? "空"}，消息：{unbindResponse?.Message ?? "空响应"}");
 
-        log($"目标仓位 {targetCellCode} 已完成解绑或已无容器，重发原任务一次");
+        // 已明确失败且仓位状态已改变，此次为新的业务下发请求，不能复用 RCS 已登记的首次编号。
+        // 编号只生成一次并传给发送操作，该发送操作的传输层重试应继续沿用这个编号。
+        var retryRequestCode = Guid.NewGuid().ToString("N");
+        log($"目标仓位 {targetCellCode} 已完成解绑或已无容器，重发原任务一次，首次 reqCode: {requestCode}，重发 reqCode: {retryRequestCode}");
         // 不递归调用恢复流程，第二次失败直接交回调用方处理。
-        response = await dispatch();
-        log($"目标仓位 {targetCellCode} 原任务重发结束，返回码：{response?.Code ?? "空"}，消息：{response?.Message ?? "空响应"}");
+        response = await dispatch(retryRequestCode);
+        log($"目标仓位 {targetCellCode} 原任务重发结束，reqCode: {retryRequestCode}，返回码：{response?.Code ?? "空"}，消息：{response?.Message ?? "空响应"}");
         return response;
     }
 

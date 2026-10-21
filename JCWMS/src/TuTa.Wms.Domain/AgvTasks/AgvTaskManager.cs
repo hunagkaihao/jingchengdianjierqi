@@ -541,9 +541,9 @@ namespace TuTa.Wms.AgvTasks
                     string[] userCallCodePath = new string[2];
                     userCallCodePath[0] = entity.StartPositionCode + "${05}";
                     userCallCodePath[1] = entity.EndPositionCode + "${05}";
-                    // 无可用仓位时按现场规则解绑目标，再以相同任务编号和路径重发一次。
-                    var response = await RcsTaskDispatchRecovery.SendAsync(entity.EndPositionCode,
-                        () => _rcsApiManager.CreateStockTaskAsync(entity.ReqCode, entity.TaskTyp, entity.CtnrTyp,
+                    // 无可用仓位时解绑目标，重发使用新 reqCode；taskCode、路径和本地任务记录保持不变。
+                    var response = await RcsTaskDispatchRecovery.SendAsync(entity.EndPositionCode, entity.ReqCode,
+                        reqCode => _rcsApiManager.CreateStockTaskAsync(reqCode, entity.TaskTyp, entity.CtnrTyp,
                             userCallCodePath, entity.ReqCode, entity.BoxCode, entity.PodCode),
                         target =>
                         {
