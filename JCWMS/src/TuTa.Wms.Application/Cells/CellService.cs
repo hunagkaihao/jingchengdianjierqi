@@ -1322,14 +1322,19 @@ namespace TuTa.Wms.Cells
         {
             try
             {
-                // 查找库位
-                var cell = await _cellRepository.FindByCellCodeAsync(para.CellCode);
-                if (cell == null)
+                // 同一物理仓位可能关联多个机台，手动设置有无货时必须更新全部同编码记录。
+                var cells = await _cellRepository.GetListAsync(cell => cell.CellCode == para.CellCode);
+                if (cells.Count == 0)
                     return new ResponseDto() { success = false, message = $"库位编码为{para.CellCode}的库位不存在" };
 
-                // 更新状态
-                cell.SetCellStatus(para.CellStatus);
-                await _cellRepository.UpdateAsync(cell);
+                // 不修改运行状态，避免手动设置有无货时解除正在执行任务的仓位锁。
+                foreach (var cell in cells)
+                {
+                    if (cell.CellStatus == para.CellStatus)
+                        continue;
+                    cell.SetCellStatus(para.CellStatus);
+                    await _cellRepository.UpdateAsync(cell);
+                }
 
                 // 如果设置为无货状态，解绑库位
                 if (para.CellStatus == CellStatus.Nohave)

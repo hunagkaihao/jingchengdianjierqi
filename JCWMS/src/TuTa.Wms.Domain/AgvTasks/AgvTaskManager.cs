@@ -98,12 +98,13 @@ namespace TuTa.Wms.AgvTasks
         }
 
         /// <summary>
-        /// 同一物理仓位编码在不同机台下的记录共享运行状态，在调用方工作单元中统一持久化。
-        /// 只同步 RunStatus，不复制有无货、物料、架子名称等其他字段。
+        /// 同一物理仓位编码在不同机台下的记录共享运行状态，并按取放结果同步显式指定的有无货状态。
+        /// 在调用方工作单元中统一持久化，不复制物料、架子名称等机台关联字段。
         /// </summary>
         /// <param name="anchor">本次任务选中的库位；使用其主编码同步，兼容通过备用编码找到库位的取消流程。</param>
         /// <param name="status">Selected 表示锁定，Enable 表示解除锁定。</param>
-        internal async Task SetSharedCellRunStatusAsync(Cell anchor, CellRunStatus status)
+        /// <param name="cellStatus">取放完成后确定的有无货状态；锁定或取消时不传，保留各记录原有状态。</param>
+        internal async Task SetSharedCellRunStatusAsync(Cell anchor, CellRunStatus status, CellStatus? cellStatus = null)
         {
             if (status != CellRunStatus.Selected && status != CellRunStatus.Enable)
                 throw new ArgumentOutOfRangeException(nameof(status));
@@ -114,8 +115,10 @@ namespace TuTa.Wms.AgvTasks
 
             foreach (var member in cells)
             {
-                // 保留任务选中实体尚未提交的字段更新；其余机台记录仅同步运行状态。
+                // 只按本次业务明确给出的状态更新整组，不能从第一条记录推断其余记录的有无货。
                 var cell = member.Id == anchor.Id ? anchor : member;
+                if (cellStatus.HasValue)
+                    cell.SetCellStatus(cellStatus.Value);
                 if (status == CellRunStatus.Selected)
                     cell.SetSelected();
                 else
@@ -357,17 +360,15 @@ namespace TuTa.Wms.AgvTasks
                 string endCode = entity.EndPositionCode;
                 Cell endCell = await _cellRepository.FindByCellCodeAsync(entity.EndPositionCode); ;
 
-                endCell.SetCellStatus(CellStatus.Have);
                 _logger.Info($"设置目标库位{endCell.CellCode}为Enable");
-                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Enable);
+                await SetSharedCellRunStatusAsync(endCell, CellRunStatus.Enable, CellStatus.Have);
 
                 //设置开始库位状态
                 string startCode = entity.StartPositionCode;
                 Cell startCell = await _cellRepository.FindByCellCodeAsync(entity.StartPositionCode);
 
-                startCell.SetCellStatus(CellStatus.Nohave);
                 _logger.Info($"设置开始库位{startCell.CellCode}为Enable");
-                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable);
+                await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable, CellStatus.Nohave);
 
                 /*Box box = null;
                 if (!(entity.StockTyp == ManageType.SkipMove || entity.StockTyp == ManageType.SkipCall || entity.StockTyp == ManageType.SkipSend
@@ -636,9 +637,8 @@ namespace TuTa.Wms.AgvTasks
                 if (entity.StockTyp == ManageType.SkipMove || entity.StockTyp == ManageType.SkipCall || entity.StockTyp == ManageType.SkipSend)
                 {
                     var startCell = await _cellRepository.FindByCellCodeAsync(entity.StartPositionCode);
-                    startCell.SetCellStatus(CellStatus.Nohave);
                     _logger.Info($"设置开始库位{startCell.CellCode}为Enable");
-                    await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable);
+                    await SetSharedCellRunStatusAsync(startCell, CellRunStatus.Enable, CellStatus.Nohave);
                 }
 
 
