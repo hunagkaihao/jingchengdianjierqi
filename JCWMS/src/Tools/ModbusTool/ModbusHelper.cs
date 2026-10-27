@@ -40,16 +40,12 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         try
         {
             client = new TcpClient();
-            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            connectCts.CancelAfter(TimeSpan.FromSeconds(5));
-            await client.ConnectAsync(ipAddress, port, connectCts.Token);
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 3000;
+            await ConnectWithTimeoutAsync(client, ipAddress, port, cancellationToken);
             stream = client.GetStream();
             var request = BuildReadInputsRequest(slaveId, startAddress, count);
-            await stream.WriteAsync(request, 0, request.Length, cancellationToken);
+            await SendWithTimeoutAsync(stream, request, cancellationToken);
             var response = new byte[1024];
-            var bytesRead = await stream.ReadAsync(response, 0, response.Length, cancellationToken);
+            var bytesRead = await ReceiveWithTimeoutAsync(stream, response, cancellationToken);
             var expectedByteCount = (count + 7) / 8;
             if (bytesRead < 9 || response[7] != 0x02 || response[8] != expectedByteCount || bytesRead < 9 + expectedByteCount)
                 return ModbusInputReadResult.Failure(count, "Modbus 响应格式错误");
@@ -120,21 +116,16 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         try
         {
             client = new TcpClient();
-            using (var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            {
-                await client.ConnectAsync(ipAddress, port, connectCts.Token);
-            }
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 3000;
+            await ConnectWithTimeoutAsync(client, ipAddress, port);
             stream = client.GetStream();
 
             // 构建Modbus TCP请求（读取保持寄存器，功能码0x03）
             byte[] request = BuildReadHoldingRegistersRequest(slaveId, startAddress, count);
-            await stream.WriteAsync(request, 0, request.Length);
+            await SendWithTimeoutAsync(stream, request);
 
             // 读取响应
             byte[] response = new byte[1024];
-            int bytesRead = await stream.ReadAsync(response, 0, response.Length);
+            int bytesRead = await ReceiveWithTimeoutAsync(stream, response);
 
             // 解析响应
             ushort[] result = ParseReadHoldingRegistersResponse(response, bytesRead, count);
@@ -167,12 +158,7 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         try
         {
             client = new TcpClient();
-            using (var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            {
-                await client.ConnectAsync(ipAddress, port, connectCts.Token);
-            }
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 3000;
+            await ConnectWithTimeoutAsync(client, ipAddress, port);
             stream = client.GetStream();
 
             // 构建Modbus TCP请求（读取线圈状态，功能码0x01）
@@ -196,11 +182,11 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
             // 数量
             request[10] = 0x00;
             request[11] = 0x01;
-            await stream.WriteAsync(request, 0, request.Length);
+            await SendWithTimeoutAsync(stream, request);
 
             // 读取响应
             byte[] response = new byte[1024];
-            int bytesRead = await stream.ReadAsync(response, 0, response.Length);
+            int bytesRead = await ReceiveWithTimeoutAsync(stream, response);
 
             // 解析响应
             if (bytesRead >= 9)
@@ -240,12 +226,7 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         try
         {
             client = new TcpClient();
-            using (var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            {
-                await client.ConnectAsync(ipAddress, port, connectCts.Token);
-            }
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 3000;
+            await ConnectWithTimeoutAsync(client, ipAddress, port);
             stream = client.GetStream();
 
             // 构建Modbus TCP请求（读取线圈状态，功能码0x01）
@@ -269,11 +250,11 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
             // 数量
             request[10] = 0x00;
             request[11] = 0x01;
-            await stream.WriteAsync(request, 0, request.Length);
+            await SendWithTimeoutAsync(stream, request);
 
             // 读取响应
             byte[] response = new byte[1024];
-            int bytesRead = await stream.ReadAsync(response, 0, response.Length);
+            int bytesRead = await ReceiveWithTimeoutAsync(stream, response);
 
             // 解析响应
             if (bytesRead >= 9)
@@ -285,6 +266,11 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
                 }
             }
             // 响应格式异常也视为读取失败
+            return (false, false);
+        }
+        catch (TimeoutException ex)
+        {
+            _logger.LogWarning("读取线圈超时 [{Ip}:{Port}]，地址: {Address}，原因: {Reason}", ipAddress, port, address, ex.Message);
             return (false, false);
         }
         catch (Exception)
@@ -315,12 +301,7 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         try
         {
             client = new TcpClient();
-            using (var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            {
-                await client.ConnectAsync(ipAddress, port, connectCts.Token);
-            }
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 3000;
+            await ConnectWithTimeoutAsync(client, ipAddress, port);
             stream = client.GetStream();
 
             // 构建Modbus TCP请求（读取线圈状态，功能码0x01）
@@ -344,11 +325,11 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
             // 数量
             request[10] = (byte)(count >> 8);
             request[11] = (byte)(count & 0xFF);
-            await stream.WriteAsync(request, 0, request.Length);
+            await SendWithTimeoutAsync(stream, request);
 
             // 读取响应
             byte[] response = new byte[1024];
-            int bytesRead = await stream.ReadAsync(response, 0, response.Length);
+            int bytesRead = await ReceiveWithTimeoutAsync(stream, response);
 
             // 解析响应
             bool[] result = new bool[count];
@@ -395,21 +376,16 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         try
         {
             client = new TcpClient();
-            using (var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            {
-                await client.ConnectAsync(ipAddress, port, connectCts.Token);
-            }
-            client.ReceiveTimeout = 5000;
-            client.SendTimeout = 3000;
+            await ConnectWithTimeoutAsync(client, ipAddress, port);
             stream = client.GetStream();
 
             // 构建Modbus TCP请求
             byte[] request = BuildWriteSingleCoilRequest(slaveId, address, value);
-            await stream.WriteAsync(request, 0, request.Length);
+            await SendWithTimeoutAsync(stream, request);
 
             // 读取响应
             byte[] response = new byte[1024];
-            int bytesRead = await stream.ReadAsync(response, 0, response.Length);
+            int bytesRead = await ReceiveWithTimeoutAsync(stream, response);
 
             // 检查响应是否成功
             return ParseWriteSingleCoilResponse(response, bytesRead);
@@ -423,6 +399,73 @@ public class ModbusHelper : ISingletonDependency, IModbusInputReader
         {
             stream?.Close();
             client?.Close();
+        }
+    }
+
+    /// <summary>PLC 每次连接的超时，单位为毫秒。</summary>
+    private const int ConnectTimeoutMs = 5000;
+
+    /// <summary>PLC 每次发送请求的超时，单位为毫秒。</summary>
+    private const int SendTimeoutMs = 3000;
+
+    /// <summary>PLC 每次等待响应的超时，单位为毫秒。</summary>
+    private const int ReceiveTimeoutMs = 5000;
+
+    /// <summary>
+    /// 限时建立连接；调用方取消仍按取消处理，内部超时转换为含阶段信息的异常。
+    /// </summary>
+    /// <param name="client">由调用方负责关闭的 TCP 客户端。</param>
+    /// <param name="ipAddress">PLC 地址。</param>
+    /// <param name="port">PLC 端口。</param>
+    /// <param name="cancellationToken">调用方取消令牌，默认不主动取消。</param>
+    private static async Task ConnectWithTimeoutAsync(TcpClient client, string ipAddress, int port, CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(ConnectTimeoutMs);
+        try
+        {
+            await client.ConnectAsync(ipAddress, port, timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw new TimeoutException($"PLC 连接超时（{ConnectTimeoutMs} 毫秒）", ex);
+        }
+    }
+
+    /// <summary>使用独立超时令牌发送请求，避免异步写入无限等待。</summary>
+    /// <param name="stream">已连接的网络流，由调用方负责关闭。</param>
+    /// <param name="request">完整请求报文。</param>
+    /// <param name="cancellationToken">调用方取消令牌，默认不主动取消。</param>
+    private static async Task SendWithTimeoutAsync(NetworkStream stream, byte[] request, CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(SendTimeoutMs);
+        try
+        {
+            await stream.WriteAsync(request, 0, request.Length, timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw new TimeoutException($"PLC 发送超时（{SendTimeoutMs} 毫秒）", ex);
+        }
+    }
+
+    /// <summary>使用独立超时令牌等待响应，避免 PLC 接受连接后不回包拖住轮询。</summary>
+    /// <param name="stream">已连接的网络流，由调用方负责关闭。</param>
+    /// <param name="response">接收缓冲区。</param>
+    /// <param name="cancellationToken">调用方取消令牌，默认不主动取消。</param>
+    /// <returns>实际收到的字节数；对端关闭连接时可能为 0。</returns>
+    private static async Task<int> ReceiveWithTimeoutAsync(NetworkStream stream, byte[] response, CancellationToken cancellationToken = default)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(ReceiveTimeoutMs);
+        try
+        {
+            return await stream.ReadAsync(response, 0, response.Length, timeoutCts.Token);
+        }
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested && timeoutCts.IsCancellationRequested)
+        {
+            throw new TimeoutException($"PLC 接收超时（{ReceiveTimeoutMs} 毫秒）", ex);
         }
     }
 
