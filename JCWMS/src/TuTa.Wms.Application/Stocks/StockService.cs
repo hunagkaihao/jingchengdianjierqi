@@ -579,8 +579,6 @@ namespace TuTa.Wms.Stocks
                             await SetAsExecutingAsync(cell, endCell, endCell.ShelfName, box, ManageType.CTUSSXIn).ConfigureAwait(false);
                             await uow.SaveChangesAsync();
 
-                            endCell.SetSelected();
-                            await _cellRepository.UpdateAsync(endCell);
                             await uow.SaveChangesAsync();
                         }
                         else
@@ -733,8 +731,6 @@ namespace TuTa.Wms.Stocks
                     await uow.SaveChangesAsync();
 
 
-                    endCell.SetSelected();
-                    await _cellRepository.UpdateAsync(endCell);
                     await uow.SaveChangesAsync();
 
 
@@ -819,8 +815,6 @@ namespace TuTa.Wms.Stocks
                         await SetAsExecutingAsync(startCell, endCell, skip.SkipCode, box, ManageType.CTUStockIn).ConfigureAwait(false);
                         await uow.SaveChangesAsync();
 
-                        endCell.SetSelected();
-                        await _cellRepository.UpdateAsync(endCell);
                         await uow.SaveChangesAsync();
 
                         await uow.CompleteAsync().ConfigureAwait(false);
@@ -942,8 +936,6 @@ namespace TuTa.Wms.Stocks
                     await uow.SaveChangesAsync();
 
 
-                    endCell.SetSelected();
-                    await _cellRepository.UpdateAsync(endCell);
 
 
 
@@ -1117,8 +1109,6 @@ namespace TuTa.Wms.Stocks
                     await uow.SaveChangesAsync();
 
 
-                    endCell.SetSelected();
-                    await _cellRepository.UpdateAsync(endCell);
 
                     await uow.SaveChangesAsync();
                     await _stocksManager.BoxFullRate(box.Id);
@@ -3051,8 +3041,6 @@ namespace TuTa.Wms.Stocks
                     await SetAsExecutingAsync(srcCell, tgtCell, null, srcBox, type);
                     await uow.SaveChangesAsync();
 
-                    tgtCell.SetSelected();
-                    await _cellRepository.UpdateAsync(tgtCell);
                     await uow.SaveChangesAsync();
 
                     await uow.CompleteAsync().ConfigureAwait(false);
@@ -3109,8 +3097,6 @@ namespace TuTa.Wms.Stocks
 
 
 
-                        endLXCells[i].SetSelected();
-                        await _cellRepository.UpdateAsync(endLXCells[i]);
                         await uow.SaveChangesAsync();
 
                         await uow.CompleteAsync().ConfigureAwait(false);
@@ -3141,8 +3127,6 @@ namespace TuTa.Wms.Stocks
                         await uow.SaveChangesAsync();
 
 
-                        endTPCells[i].SetSelected();
-                        await _cellRepository.UpdateAsync(endTPCells[i]);
                         await uow.SaveChangesAsync();
 
                         await uow.CompleteAsync().ConfigureAwait(false);
@@ -3697,12 +3681,10 @@ namespace TuTa.Wms.Stocks
 
         private async Task<AgvTask> SetAsExecutingAsync(Cell startCell, Cell endCell, string skipCode, Box box, ManageType type)
         {
-            startCell.SetSelected();
+            await _agvTaskManager.SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
             _logger.Info($"{startCell.CellCode}已锁定");
-            await _cellRepository.UpdateAsync(startCell);
-            endCell.SetSelected();
+            await _agvTaskManager.SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
             _logger.Info($"{endCell.CellCode}已锁定");
-            await _cellRepository.UpdateAsync(endCell);
 
             AgvTask agvtask = null;
 

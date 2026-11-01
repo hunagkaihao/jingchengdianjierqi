@@ -232,11 +232,6 @@ namespace TuTa.Wms.Skips
                 }
                 await CurrentUnitOfWork.SaveChangesAsync();
 
-
-                cell.SetSelected();
-                await _cellRepository.UpdateAsync(cell);
-                await CurrentUnitOfWork.SaveChangesAsync();
-
                 return new ResponseDto() { success = true, message = "料车发送成功" };
             }
             catch (Exception ex)
@@ -296,12 +291,6 @@ namespace TuTa.Wms.Skips
                 {
                     await SetAsExecutingAsync(startCell, endCell, skip, ManageType.SkipMove);
                 }
-                await CurrentUnitOfWork.SaveChangesAsync();
-
-                Cell endCell2 = await _cellRepository.FindByCellCodeAsync(endCell.CellCode);
-                _logger.Info($"{endCell2.CellCode}锁定2");
-                endCell2.SetSelected();
-                await _cellRepository.UpdateAsync(endCell2);
                 await CurrentUnitOfWork.SaveChangesAsync();
 
                 return new ResponseDto() { success = true, message = "料车叫回成功" };
@@ -665,12 +654,10 @@ namespace TuTa.Wms.Skips
 
         private async Task<AgvTask> SetAsExecutingAsync(Cell startCell, Cell endCell, Skip skip, ManageType type)
         {
+            await _agvTaskManager.SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
             _logger.Info($"{startCell.CellCode}已锁定");
-            startCell.SetSelected();
-            await _cellRepository.UpdateAsync(startCell);
+            await _agvTaskManager.SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
             _logger.Info($"{endCell.CellCode}已锁定");
-            endCell.SetSelected();
-            await _cellRepository.UpdateAsync(endCell);
 
 
             AgvTask agvtask = await _agvTaskManager.CreateSkipTaskAsync(startCell.CellName, endCell.CellName, skip.SkipCode,type);
@@ -680,9 +667,8 @@ namespace TuTa.Wms.Skips
 
         private async Task<AgvTask> SetAsExecutingAsync(Cell startCell, Skip skip, ManageType type)
         {
+            await _agvTaskManager.SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
             _logger.Info($"{startCell.CellCode}已锁定");
-            startCell.SetSelected();
-            await _cellRepository.UpdateAsync(startCell);
 
 
             AgvTask agvtask = await _agvTaskManager.CreateSkipCallTaskAsync(startCell.CellName, skip.SkipCode, type);

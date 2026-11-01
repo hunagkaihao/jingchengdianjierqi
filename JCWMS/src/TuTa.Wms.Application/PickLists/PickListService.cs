@@ -997,8 +997,6 @@ namespace TuTa.Wms.PickLists
                         return new ResponseDto() { success = false, message = $"结束库位类型错误" };
                     }
 
-                    endCell.SetSelected();
-                    await _cellRepository.UpdateAsync(endCell);
 
 
 
@@ -1075,8 +1073,6 @@ namespace TuTa.Wms.PickLists
 
                     await SetAsExecutingAsync(startCell, endCell, null, box, ManageType.CTUStockOut, null, null).ConfigureAwait(false);
 
-                    endCell.SetSelected();
-                    await _cellRepository.UpdateAsync(endCell);
 
                     await uow.CompleteAsync().ConfigureAwait(false);
 
@@ -1202,13 +1198,6 @@ namespace TuTa.Wms.PickLists
                                     return new ResponseDto() { success = false, message = $"库位码为700030B1501013的库位不存在" };
                                 await SetAsExecutingAsync(startCell, endCell, null, boxs[i], ManageType.LiftSSXOut, null, null).ConfigureAwait(false);
                             }
-                        }
-                        await uow.SaveChangesAsync();
-
-                        if(endArea== "0")
-                        {
-                            endCells[i].SetSelected();
-                            await _cellRepository.UpdateAsync(endCells[i]);
                         }
                         await uow.SaveChangesAsync();
 
@@ -1925,11 +1914,9 @@ namespace TuTa.Wms.PickLists
 
         private async Task<AgvTask> SetAsExecutingAsync(Cell startCell, Cell endCell, string skipCode, Box box, ManageType type,string picklist,string unique)
         {
-            startCell.SetSelected();
-            await _cellRepository.UpdateAsync(startCell);
+            await _agvTaskManager.SetSharedCellRunStatusAsync(startCell, CellRunStatus.Selected);
             _logger.Info($"设置起始库位{startCell.CellCode}为Selected");
-            endCell.SetSelected();
-            await _cellRepository.UpdateAsync(endCell);
+            await _agvTaskManager.SetSharedCellRunStatusAsync(endCell, CellRunStatus.Selected);
             _logger.Info($"设置目标库位{endCell.CellCode}为Selected");
 
             AgvTask agvtask = null;

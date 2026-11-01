@@ -104,7 +104,7 @@ namespace TuTa.Wms.AgvTasks
         /// <param name="anchor">本次任务选中的库位；使用其主编码同步，兼容通过备用编码找到库位的取消流程。</param>
         /// <param name="status">Selected 表示锁定，Enable 表示解除锁定。</param>
         /// <param name="cellStatus">取放完成后确定的有无货状态；锁定或取消时不传，保留各记录原有状态。</param>
-        internal async Task SetSharedCellRunStatusAsync(Cell anchor, CellRunStatus status, CellStatus? cellStatus = null)
+        public async Task SetSharedCellRunStatusAsync(Cell anchor, CellRunStatus status, CellStatus? cellStatus = null)
         {
             if (status != CellRunStatus.Selected && status != CellRunStatus.Enable)
                 throw new ArgumentOutOfRangeException(nameof(status));
@@ -125,6 +125,23 @@ namespace TuTa.Wms.AgvTasks
                     cell.SetEnable();
                 await _cellRepository.UpdateAsync(cell);
             }
+        }
+
+        /// <summary>
+        /// 按候选顺序选择整组均未锁定的物理仓位，兼容历史数据中同编码锁定状态不一致的情况。
+        /// </summary>
+        /// <param name="candidates">已按区域、机台及有无货筛选的库位，保留调用方的优先顺序。</param>
+        /// <returns>第一个同编码记录均未锁定的候选；无可用仓位时返回 null。</returns>
+        internal async Task<Cell> FindUnlockedSharedCellAsync(List<Cell> candidates)
+        {
+            if (candidates.Count == 0)
+                return null;
+
+            var codes = candidates.Select(cell => cell.CellCode).Distinct().ToList();
+            var lockedCells = await _cellRepository.GetListAsync(cell =>
+                codes.Contains(cell.CellCode) && cell.RunStatus == CellRunStatus.Selected);
+            var lockedCodes = lockedCells.Select(cell => cell.CellCode).ToHashSet();
+            return candidates.FirstOrDefault(cell => !lockedCodes.Contains(cell.CellCode));
         }
 
         [UnitOfWork]
@@ -858,7 +875,7 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 4. 选择第一个可用的空衬托库位
-                var startCell = emptyBoxCells.FirstOrDefault();
+                var startCell = await FindUnlockedSharedCellAsync(emptyBoxCells);
                 if (startCell == null)
                 {
                     throw new UserFriendlyException("没有可用的空衬托库位");
@@ -942,7 +959,7 @@ namespace TuTa.Wms.AgvTasks
                     t.ShelfName.Contains(machineName));
                     
                 // 4. 选择第一个可用的成品区库位
-                var endCell = finishedProductCells.FirstOrDefault();
+                var endCell = await FindUnlockedSharedCellAsync(finishedProductCells);
                 if (endCell == null)
                 {
                     throw new UserFriendlyException("无法选择成品区库位");
@@ -1032,7 +1049,7 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 3. 选择第一个可用的空盒衬库位
-                var endCell = emptyBoxCells.FirstOrDefault();
+                var endCell = await FindUnlockedSharedCellAsync(emptyBoxCells);
                 if (endCell == null)
                 {
                     throw new UserFriendlyException("无法选择空盒衬库位");
@@ -1121,7 +1138,7 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 4. 选择第一个可用的半成品有料库位
-                var startCell = semiFinishedCells.FirstOrDefault();
+                var startCell = await FindUnlockedSharedCellAsync(semiFinishedCells);
                 if (startCell == null)
                 {
                     throw new UserFriendlyException("无法选择半成品有料库位");
