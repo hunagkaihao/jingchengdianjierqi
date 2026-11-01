@@ -1,7 +1,9 @@
 <template>
   <RouterView>
     <template #default="{ Component, route }">
+      <!-- 关闭动画时同时禁用 CSS 过渡，避免 out-in 仍等待动画帧后才渲染目标页。 -->
       <transition
+        :css="getEnableTransition"
         :name="
           getTransitionName({
             route,
@@ -11,7 +13,7 @@
             def: getBasicTransition,
           })
         "
-        mode="out-in"
+        :mode="getEnableTransition ? 'out-in' : undefined"
         appear
       >
         <keep-alive v-if="openCache" :include="getCaches">
