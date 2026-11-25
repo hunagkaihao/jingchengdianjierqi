@@ -828,6 +828,52 @@ namespace TuTa.Wms.AgvTasks
         }
 
         /// <summary>
+        /// 按机台和搬运方向查找区域 1 的空盒衬候选库位。对应货架尚未配置时，沿用旧规则。
+        /// </summary>
+        /// <param name="machineCellCode">机台交互点位的库位编码，用于查找所属机台。</param>
+        /// <param name="toMachine">上机台时取有货库位，下机台时取空库位。</param>
+        /// <returns>方向和有无货状态符合要求的可用库位。</returns>
+        internal async Task<List<Cell>> FindEmptyBoxShelfCellsAsync(string machineCellCode, bool toMachine)
+        {
+            var machinePoints = await _machinePointRepository.GetListAsync(p => p.CellCode == machineCellCode);
+            var machinePoint = machinePoints.FirstOrDefault();
+            var machine = machinePoint == null ? null : await _machineRepository.GetAsync(machinePoint.MachineId);
+            var machineName = machine?.Name;
+            var requiredStatus = toMachine ? CellStatus.Have : CellStatus.Nohave;
+
+            if (!string.IsNullOrWhiteSpace(machineName))
+            {
+                // 末尾 -1 为上料架，-2 为回收架。按完整名称匹配，避免相似机台名称串用货架。
+                var shelfName = machineName + (toMachine ? "-1" : "-2");
+                var configuredCells = await _cellRepository.GetListAsync(cell =>
+                    cell.WarehouseAreaId == 1 && cell.ShelfName == shelfName);
+                if (configuredCells.Count > 0)
+                {
+                    // 专用货架缺货、已满或被锁定时，只返回该架的可用库位。
+                    return configuredCells.Where(cell =>
+                        cell.RunStatus == CellRunStatus.Enable && cell.CellStatus == requiredStatus).ToList();
+                }
+            }
+
+            if (toMachine)
+            {
+                return await _cellRepository.GetListAsync(cell =>
+                    cell.WarehouseAreaId == 1 && cell.RunStatus == CellRunStatus.Enable &&
+                    cell.CellStatus == requiredStatus && (cell.ShelfName == null || cell.ShelfName == ""));
+            }
+
+            if (string.IsNullOrWhiteSpace(machineName))
+                return new List<Cell>();
+
+            // 兼容旧回收架时排除新编号，避免把上料架或名称相似机台的回收架选为目标。
+            return await _cellRepository.GetListAsync(cell =>
+                cell.WarehouseAreaId == 1 && cell.RunStatus == CellRunStatus.Enable &&
+                cell.CellStatus == requiredStatus && cell.ShelfName != null &&
+                cell.ShelfName.Contains(machineName) &&
+                !cell.ShelfName.EndsWith("-1") && !cell.ShelfName.EndsWith("-2"));
+        }
+
+        /// <summary>
         /// 创建空盒衬上机台任务
         /// </summary>
         /// <param name="machineCellCode">机台库位编码</param>
@@ -852,22 +898,8 @@ namespace TuTa.Wms.AgvTasks
                     throw new UserFriendlyException($"机台库位{machineCellCode}已经被锁定，不能重复下发任务");
                 }
 
-                // 2. 通过machineCellCode查机台名称
-                var machinePoint = await _machinePointRepository.FirstOrDefaultAsync(p => p.CellCode == machineCellCode);
-                string machineName = null;
-                if (machinePoint != null)
-                {
-                    var machine = await _machineRepository.GetAsync(machinePoint.MachineId);
-                    machineName = machine?.Name;
-                }
-
-                // 3. 查找空衬托区域的有货库位（WarehouseAreaId == 1）
-                // 优先匹配ShelfName包含机台名称的货架
-                var emptyBoxCells = await _cellRepository.GetListAsync(t => 
-                    t.WarehouseAreaId == 1 && 
-                    t.RunStatus == CellRunStatus.Enable && 
-                    t.CellStatus == CellStatus.Have &&
-                   (t.ShelfName == null || t.ShelfName == ""));
+                // 2. 查找上空盒衬货架的有货库位
+                var emptyBoxCells = await FindEmptyBoxShelfCellsAsync(machineCellCode, toMachine: true);
                 
                 if (emptyBoxCells == null || emptyBoxCells.Count == 0)
                 {
@@ -1026,22 +1058,8 @@ namespace TuTa.Wms.AgvTasks
                     throw new UserFriendlyException($"开始库位{cellCode}已经被锁定，不能重复下发任务");
                 }
 
-                // 2. 通过cellCode查机台名称
-                var machinePoint = await _machinePointRepository.FirstOrDefaultAsync(p => p.CellCode == cellCode);
-                string machineName = null;
-                if (machinePoint != null)
-                {
-                    var machine = await _machineRepository.GetAsync(machinePoint.MachineId);
-                    machineName = machine?.Name;
-                }
-
-                // 3. 查找空盒衬货架区域的空库位（WarehouseAreaId == 1）
-                // 优先匹配ShelfName包含机台名称的货架
-                var emptyBoxCells = await _cellRepository.GetListAsync(t => 
-                    t.WarehouseAreaId == 1 && 
-                    t.RunStatus == CellRunStatus.Enable && 
-                    t.CellStatus == CellStatus.Nohave &&
-                    machineName != null && t.ShelfName.Contains(machineName));
+                // 2. 查找下空盒衬货架的空库位
+                var emptyBoxCells = await FindEmptyBoxShelfCellsAsync(cellCode, toMachine: false);
                 
                 if (emptyBoxCells == null || emptyBoxCells.Count == 0)
                 {
