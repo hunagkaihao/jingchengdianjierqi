@@ -7,6 +7,8 @@ declare module 'vue-router' {
     title: string;
     // Whether to ignore permissions
     ignoreAuth?: boolean;
+    // 需要有效的 PDA 登录会话，失效时返回 PDA 登录页。
+    requiresMobileSession?: boolean;
     // role info
     roles?: RoleEnum[];
     // Whether not to cache

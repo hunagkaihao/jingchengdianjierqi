@@ -85,6 +85,12 @@
               </div><div class="menu-item-text">货架状态</div>
             </div>
           </a-col>
+          <a-col :span="8" v-auth="'Wms.Edit'">
+            <div class="menu-item-card" @click="mobileMachineShelfConfig">
+              <div class="menu-item-icon-wrapper"><EditOutlined class="menu-item-icon" /></div>
+              <div class="menu-item-text">机台货架修改</div>
+            </div>
+          </a-col>
           <!-- 料车叫回按钮已移除 -->
           <!-- 手工入库按钮已移除 -->
 
@@ -252,6 +258,10 @@ const mobileMachineStatus = async () => {
   await router.replace('/mobileMachineStatus');
 };
 const shelfStatus = async () => { await router.replace('/shelfStatus'); };
+/** 打开机台货架绑定的修改页面。 */
+const mobileMachineShelfConfig = async () => {
+  await router.replace('/mobileMachineShelfConfig');
+};
 const mobileMachineConfig = async () => {
   await router.replace('/mobileMachineConfig');
 };

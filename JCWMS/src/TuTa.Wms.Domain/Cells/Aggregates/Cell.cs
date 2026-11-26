@@ -5,6 +5,7 @@ using System.Linq;
 using TuTa.Wms.Cells.Entities;
 using Volo.Abp;
 using Volo.Abp.Domain.Entities.Auditing;
+using Volo.Abp.Data;
 
 namespace TuTa.Wms.Cells.Aggregates
 {
@@ -85,6 +86,25 @@ namespace TuTa.Wms.Cells.Aggregates
             //    CellType = this.CellType,
             //    AvailableBoxSpecsNames = this.AvailableBoxSpecsNames
             //});
+        }
+
+        /// <summary>创建机台货架库位。同编码的货架绑定共享物理状态，容器仍属于原记录。</summary>
+        public static Cell CreateMachineShelfCell(Guid id, Guid warehouseId, int? warehouseAreaId,
+            string shelfName, string cellCode, string cellName, Cell physicalCell)
+        {
+            var cell = new Cell(id, warehouseId, warehouseAreaId, shelfName, cellCode, cellName,
+                (physicalCell?.CellType ?? CellType.CTUCell).ToString(),
+                string.IsNullOrWhiteSpace(physicalCell?.AvailableBoxSpecsNames) ? null : physicalCell.AvailableBoxSpecsNames,
+                string.IsNullOrWhiteSpace(physicalCell?.AvailableSkipSpecsNames) ? null : physicalCell.AvailableSkipSpecsNames);
+            if (physicalCell != null)
+            {
+                cell.CellStatus = physicalCell.CellStatus;
+                cell.RunStatus = physicalCell.RunStatus;
+                cell.CellInOut = physicalCell.CellInOut;
+                cell.CellHeight = physicalCell.CellHeight;
+                cell.CellWeight = physicalCell.CellWeight;
+            }
+            return cell;
         }
 
         public void AddBox(CellBox box, string materialCode, string materialName)
@@ -199,6 +219,33 @@ namespace TuTa.Wms.Cells.Aggregates
         /// </summary>
         [StringLength(30)]
         public string ShelfName { get; private set; }
+
+        /// <summary>修改实际货架的名称，使新名称参与后续 AGV 选位。</summary>
+        public void RenameShelf(string shelfName)
+        {
+            if (ShelfName != shelfName)
+            {
+                ShelfName = shelfName;
+                // 新货架名称取代旧页面保存的绑定，避免编辑后 AGV 继续使用旧绑定。
+                SetMachineShelfAssignment(null);
+            }
+        }
+
+        /// <summary>
+        /// PDA 保存的机台货架绑定。空字符串表示已解除绑定，null 表示沿用原货架名称。
+        /// </summary>
+        public string GetMachineShelfAssignment()
+        {
+            return this.GetProperty<string>("MachineShelfAssignment");
+        }
+
+        /// <summary>
+        /// 保存机台货架绑定。多个机台用逗号分隔，上下空盒衬使用带方向后缀的机台名称。
+        /// </summary>
+        public void SetMachineShelfAssignment(string assignment)
+        {
+            this.SetProperty("MachineShelfAssignment", assignment);
+        }
 
         /// <summary>
         /// 架子存放的物料编码

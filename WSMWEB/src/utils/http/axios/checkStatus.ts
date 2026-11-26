@@ -1,7 +1,7 @@
 import type { ErrorMessageMode } from '/#/axios';
 import { useMessage } from '/@/hooks/web/useMessage';
 import { useI18n } from '/@/hooks/web/useI18n';
-// import router from '/@/router';
+import { router } from '/@/router';
 // import { PageEnum } from '/@/enums/pageEnum';
 import { useUserStoreWithOut } from '/@/store/modules/user';
 import projectSetting from '/@/settings/projectSetting';
@@ -29,7 +29,9 @@ export function checkStatus(
     // Return to the current page after successful login. This step needs to be operated on the login page.
     case 401:
       errMessage = t('sys.api.errMsg401');
-      if (stp === SessionTimeoutProcessingEnum.PAGE_COVERAGE) {
+      if (router.currentRoute.value.meta.requiresMobileSession) {
+        userStore.mobilelogout(true);
+      } else if (stp === SessionTimeoutProcessingEnum.PAGE_COVERAGE) {
         userStore.setToken(undefined);
         userStore.setSessionTimeout(true);
       } else {

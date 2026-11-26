@@ -840,13 +840,13 @@ namespace TuTa.Wms.AgvTasks
             var machine = machinePoint == null ? null : await _machineRepository.GetAsync(machinePoint.MachineId);
             var machineName = machine?.Name;
             var requiredStatus = toMachine ? CellStatus.Have : CellStatus.Nohave;
+            var areaCells = await _cellRepository.GetListAsync(cell => cell.WarehouseAreaId == 1);
 
             if (!string.IsNullOrWhiteSpace(machineName))
             {
                 // 末尾 -1 为上料架，-2 为回收架。按完整名称匹配，避免相似机台名称串用货架。
                 var shelfName = machineName + (toMachine ? "-1" : "-2");
-                var configuredCells = await _cellRepository.GetListAsync(cell =>
-                    cell.WarehouseAreaId == 1 && cell.ShelfName == shelfName);
+                var configuredCells = areaCells.Where(cell => MatchesMachineShelf(cell, shelfName, exactLegacyName: true)).ToList();
                 if (configuredCells.Count > 0)
                 {
                     // 专用货架缺货、已满或被锁定时，只返回该架的可用库位。
@@ -857,20 +857,33 @@ namespace TuTa.Wms.AgvTasks
 
             if (toMachine)
             {
-                return await _cellRepository.GetListAsync(cell =>
-                    cell.WarehouseAreaId == 1 && cell.RunStatus == CellRunStatus.Enable &&
-                    cell.CellStatus == requiredStatus && (cell.ShelfName == null || cell.ShelfName == ""));
+                return areaCells.Where(cell => cell.GetMachineShelfAssignment() == null &&
+                    cell.RunStatus == CellRunStatus.Enable && cell.CellStatus == requiredStatus &&
+                    string.IsNullOrEmpty(cell.ShelfName)).ToList();
             }
 
             if (string.IsNullOrWhiteSpace(machineName))
                 return new List<Cell>();
 
             // 兼容旧回收架时排除新编号，避免把上料架或名称相似机台的回收架选为目标。
-            return await _cellRepository.GetListAsync(cell =>
-                cell.WarehouseAreaId == 1 && cell.RunStatus == CellRunStatus.Enable &&
-                cell.CellStatus == requiredStatus && cell.ShelfName != null &&
-                cell.ShelfName.Contains(machineName) &&
-                !cell.ShelfName.EndsWith("-1") && !cell.ShelfName.EndsWith("-2"));
+            return areaCells.Where(cell => cell.GetMachineShelfAssignment() == null &&
+                cell.RunStatus == CellRunStatus.Enable && cell.CellStatus == requiredStatus &&
+                MatchesMachineShelf(cell, machineName) &&
+                !cell.ShelfName.EndsWith("-1") && !cell.ShelfName.EndsWith("-2")).ToList();
+        }
+
+        /// <summary>
+        /// 按完整机台名称匹配 PDA 绑定，未设置绑定的库位沿用原货架名称匹配规则。
+        /// </summary>
+        internal static bool MatchesMachineShelf(Cell cell, string name, bool exactLegacyName = false)
+        {
+            var assignment = cell.GetMachineShelfAssignment();
+            if (assignment != null)
+                return assignment.Split(',', StringSplitOptions.RemoveEmptyEntries).Contains(name, StringComparer.OrdinalIgnoreCase);
+
+            return exactLegacyName
+                ? string.Equals(cell.ShelfName, name, StringComparison.OrdinalIgnoreCase)
+                : cell.ShelfName?.Contains(name, StringComparison.OrdinalIgnoreCase) == true;
         }
 
         /// <summary>
@@ -983,12 +996,11 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 3. 查找对应机台的成品区货架库位
-                // 假设成品区的 WarehouseAreaId == 2，且货架名称包含机台名称
                 var finishedProductCells = await _cellRepository.GetListAsync(t => 
                     t.WarehouseAreaId == 2 && 
                     t.RunStatus == CellRunStatus.Enable && 
-                    t.CellStatus == CellStatus.Nohave &&
-                    t.ShelfName.Contains(machineName));
+                    t.CellStatus == CellStatus.Nohave);
+                finishedProductCells = finishedProductCells.Where(cell => MatchesMachineShelf(cell, machineName)).ToList();
                     
                 // 4. 选择第一个可用的成品区库位
                 var endCell = await FindUnlockedSharedCellAsync(finishedProductCells);
@@ -1143,12 +1155,11 @@ namespace TuTa.Wms.AgvTasks
                 }
 
                 // 3. 查找对应机台的半成品区域有料库位
-                // 假设半成品区域的 WarehouseAreaId == 3，且货架名称包含机台名称
                 var semiFinishedCells = await _cellRepository.GetListAsync(t => 
                     t.WarehouseAreaId == 3 && 
                     t.RunStatus == CellRunStatus.Enable && 
-                    t.CellStatus == CellStatus.Have &&
-                    t.ShelfName.Contains(machineName));
+                    t.CellStatus == CellStatus.Have);
+                semiFinishedCells = semiFinishedCells.Where(cell => MatchesMachineShelf(cell, machineName)).ToList();
 
                 if (semiFinishedCells == null || semiFinishedCells.Count == 0)
                 {

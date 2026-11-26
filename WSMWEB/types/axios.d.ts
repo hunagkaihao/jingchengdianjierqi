@@ -21,6 +21,8 @@ export interface RequestOptions {
   ignoreCancelToken?: boolean;
   // Whether to send token in header
   withToken?: boolean;
+  // 覆盖当前请求的 Authorization 认证方案，例如 Bearer。
+  authenticationScheme?: string;
 }
 
 export interface Result<T = any> {

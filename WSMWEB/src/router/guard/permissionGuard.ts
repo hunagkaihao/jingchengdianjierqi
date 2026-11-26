@@ -40,6 +40,15 @@ export function createPermissionGuard(router: Router) {
 
     const token = userStore.getToken;
 
+    if (to.meta.requiresMobileSession) {
+      if (!token || userStore.checkUserLoginExpire) {
+        next({ path: PageEnum.BASE_MOBILELOGIN, replace: true });
+        return;
+      }
+      next();
+      return;
+    }
+
     // token does not exist
     //console.log(to.meta.ignoreAuth)
     if (to.meta.ignoreAuth) {

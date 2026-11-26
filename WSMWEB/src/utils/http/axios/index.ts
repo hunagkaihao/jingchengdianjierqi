@@ -134,11 +134,10 @@ const transform: AxiosTransform = {
   requestInterceptors: (config, options) => {
     // 请求之前处理config
     const token = getToken();
-    if (token && (config as Recordable)?.requestOptions?.withToken !== false) {
-      // jwt token
-      config.headers.Authorization = options.authenticationScheme
-        ? `${options.authenticationScheme} ${token}`
-        : token;
+    const requestOptions = (config as Recordable).requestOptions as RequestOptions | undefined;
+    if (token && requestOptions?.withToken !== false) {
+      const scheme = requestOptions?.authenticationScheme ?? options.authenticationScheme;
+      config.headers.Authorization = scheme ? `${scheme} ${token}` : token;
     }
     return config;
   },

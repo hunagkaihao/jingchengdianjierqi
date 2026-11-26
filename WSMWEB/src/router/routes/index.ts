@@ -233,6 +233,13 @@ export const MobileMachineStatus: AppRouteRecordRaw = {
   },
 };
 export const ShelfStatus: AppRouteRecordRaw = { path: '/shelfStatus', name: 'ShelfStatus', component: () => import('/@/views/mobile/views/ShelfStatus.vue'), meta: { title: t('货架状态'), ignoreKeepAlive: true, ignoreAuth: true } };
+// PDA 机台货架配置，读取和保存均需要 Wms.Edit 权限。
+export const MobileMachineShelfConfig: AppRouteRecordRaw = {
+  path: '/mobileMachineShelfConfig',
+  name: 'MobileMachineShelfConfig',
+  component: () => import('/@/views/mobile/views/MobileMachineShelfConfig.vue'),
+  meta: { title: t('机台货架修改'), ignoreKeepAlive: true, requiresMobileSession: true },
+};
 //移动端机台配置
 export const MobileMachineConfig: AppRouteRecordRaw = {
   path: '/mobileMachineConfig',
@@ -284,6 +291,7 @@ export const basicRoutes = [
   AcceptanceCall2,
   MobileMachineStatus,
   ShelfStatus,
+  MobileMachineShelfConfig,
   MobileMachineConfig,
   // AcceptanceOut2已删除
   // ShelfIncellList已删除
