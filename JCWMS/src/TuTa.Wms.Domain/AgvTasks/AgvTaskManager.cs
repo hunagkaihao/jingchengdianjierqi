@@ -144,6 +144,47 @@ namespace TuTa.Wms.AgvTasks
             return candidates.FirstOrDefault(cell => !lockedCodes.Contains(cell.CellCode));
         }
 
+        /// <summary>为下空盒衬任务选择最低的可用空库位。同层按库位编码排序，无法识别层号的旧库位排在最后。</summary>
+        /// <param name="candidates">已按机台、货架及空位状态筛选的候选库位。</param>
+        /// <returns>第一个未被共享锁占用的库位，无可用库位时返回 null。</returns>
+        internal Task<Cell> FindLowestUnlockedShelfCellAsync(List<Cell> candidates)
+        {
+            return FindUnlockedSharedCellAsync(candidates
+                .OrderBy(cell => GetShelfLayer(cell.CellCode))
+                .ThenBy(cell => cell.CellCode, StringComparer.Ordinal)
+                .ToList());
+        }
+
+        /// <summary>成品按列号升序放置，同列从底层往上选位，无法识别层号的旧库位排在最后。</summary>
+        /// <param name="candidates">已按机台、成品货架及空位状态筛选的候选库位。</param>
+        /// <returns>按放置顺序找到的第一个未锁定的库位，无可用库位时返回 null。</returns>
+        internal Task<Cell> FindUnlockedFinishedShelfCellAsync(List<Cell> candidates)
+        {
+            return FindUnlockedSharedCellAsync(candidates
+                .Select(cell => (Cell: cell, Layer: GetShelfLayer(cell.CellCode)))
+                .OrderBy(candidate => candidate.Layer == int.MaxValue)
+                .ThenBy(candidate => candidate.Layer == int.MaxValue ? null : candidate.Cell.CellCode[..6], StringComparer.Ordinal)
+                .ThenBy(candidate => candidate.Layer)
+                .ThenBy(candidate => candidate.Cell.CellCode, StringComparer.Ordinal)
+                .Select(candidate => candidate.Cell)
+                .ToList());
+        }
+
+        /// <summary>从三层货架点位编码（如 600001X3501013）读取第十至十一位的层号，01 为底层。</summary>
+        /// <param name="code">物理库位编码。</param>
+        /// <returns>有效层号为 1 至 3，无法识别时返回 int.MaxValue。</returns>
+        private static int GetShelfLayer(string code)
+        {
+            if (code?.Length == 14 && code[6] == 'X' && char.IsAsciiDigit(code[7]) &&
+                char.IsAsciiDigit(code[8]) && code[9] == '0' && code[10] is >= '1' and <= '3' &&
+                code.EndsWith("013", StringComparison.Ordinal))
+            {
+                return code[10] - '0';
+            }
+
+            return int.MaxValue;
+        }
+
         [UnitOfWork]
         public async Task<AgvTask> CreateCtuStockInByStockTaskAsync(string boxCode, string ctnrTyp, string startCellName, string endCellName, string podCode, ManageType type)
         {
@@ -1002,8 +1043,8 @@ namespace TuTa.Wms.AgvTasks
                     t.CellStatus == CellStatus.Nohave);
                 finishedProductCells = finishedProductCells.Where(cell => MatchesMachineShelf(cell, machineName)).ToList();
                     
-                // 4. 选择第一个可用的成品区库位
-                var endCell = await FindUnlockedSharedCellAsync(finishedProductCells);
+                // 4. 按列号升序选位，同列内由下往上放置
+                var endCell = await FindUnlockedFinishedShelfCellAsync(finishedProductCells);
                 if (endCell == null)
                 {
                     throw new UserFriendlyException("无法选择成品区库位");
@@ -1078,8 +1119,8 @@ namespace TuTa.Wms.AgvTasks
                     throw new UserFriendlyException("没有找到空盒衬区域的可用库位");
                 }
 
-                // 3. 选择第一个可用的空盒衬库位
-                var endCell = await FindUnlockedSharedCellAsync(emptyBoxCells);
+                // 3. 优先选择最低层的可用空盒衬库位
+                var endCell = await FindLowestUnlockedShelfCellAsync(emptyBoxCells);
                 if (endCell == null)
                 {
                     throw new UserFriendlyException("无法选择空盒衬库位");
